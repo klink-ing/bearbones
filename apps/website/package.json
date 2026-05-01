@@ -4,9 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev",
-    "build": "tsc && vp build",
-    "preview": "vp preview"
+    "dev": "panda codegen && panda --watch & vp dev",
+    "build": "panda codegen && panda && tsc && vp build",
+    "preview": "vp preview",
+    "panda": "panda codegen && panda"
+  },
+  "dependencies": {
+    "@bearbones/codegen": "workspace:*",
+    "@bearbones/preset": "workspace:*",
+    "@bearbones/vite": "workspace:*",
+    "@pandacss/dev": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "bearbones": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

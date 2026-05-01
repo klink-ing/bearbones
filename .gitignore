@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Panda CSS codegen output — regenerated on every build
+styled-system/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
