@@ -148,7 +148,7 @@ The existing `generateTypes()` logic in `packages/bearbones-codegen/src/index.ts
 
 ### `apps/website/src/Demo.tsx` — cast removed
 
-The seven-line `TypedCss` cast block at the top of the file is deleted. `css` is imported directly from `../styled-system/css` and used unchanged. This becomes the de facto integration test: if `pnpm run check` (which runs `tsc` on the website) passes after the cast is removed, the patch works end-to-end.
+The seven-line `TypedCss` cast block at the top of the file is deleted. The `BearbonesStyleInput` symbol is also dropped from the `bearbones` import on line 6, since nothing else in the file references it. `css` is imported directly from `../styled-system/css` and used unchanged. This becomes the de facto integration test: if `pnpm run check` (which runs `tsc` on the website) passes after the cast is removed, the patch works end-to-end.
 
 ### `packages/bearbones/src/index.ts` — type-only exports cleaned up
 
@@ -157,6 +157,8 @@ The current re-exports of `BearbonesUtilityName`, `BearbonesStyleInput`, `Bearbo
 - `BearbonesUtilityName`: keep — useful for users who want to type a function arg as "a bearbones utility name". Source of truth stays in `@bearbones/vite/utility-map.ts`.
 - `BearbonesStyleInput`, `BearbonesConditionObject`: delete — these existed only to support the manual cast, which is gone.
 - `BearbonesGroupRuntime`: keep — the runtime shape returned from `group()`.
+
+After deleting `BearbonesConditionObject`, also remove the now-orphaned `import type { BearbonesUtilityName }` line that fed it (currently line 92 of `packages/bearbones/src/index.ts`). The top-level `export type { BearbonesUtilityName } from "@bearbones/vite"` re-export stays.
 
 ## Testing
 
