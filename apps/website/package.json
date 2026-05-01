@@ -7,7 +7,8 @@
     "dev": "panda codegen && panda --watch & vp dev",
     "build": "panda codegen && panda && tsc && vp build",
     "preview": "vp preview",
-    "panda": "panda codegen && panda"
+    "panda": "panda codegen && panda",
+    "codegen": "panda codegen"
   },
   "dependencies": {
     "@bearbones/codegen": "workspace:*",
