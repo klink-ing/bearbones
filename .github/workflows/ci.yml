@@ -23,9 +23,13 @@ jobs:
       # the matching Node.js version, the configured package manager, and
       # handles the dependency cache. Replaces separate setup-node + pnpm
       # action-setup + manual cache wiring.
+      #
+      # `node-version-file: package.json` reads the engines.node range so
+      # the lockfile + engines field stay the single source of truth; bumping
+      # Node only requires editing package.json.
       - uses: voidzero-dev/setup-vp@v1
         with:
-          node-version: "22"
+          node-version-file: package.json
           cache: true
 
       - run: vp install
