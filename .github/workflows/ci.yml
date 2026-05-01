@@ -35,3 +35,22 @@ jobs:
 
       - name: Run check (lint, format, typecheck, tests)
         run: pnpm run check
+
+  # Aggregator job — the single name listed in the branch ruleset's required
+  # status checks. Adding a new CI job means appending it to `needs:` here;
+  # no ruleset edit required.
+  ci-success:
+    name: ci-success
+    needs: [check]
+    runs-on: ubuntu-latest
+    # Run even when a needed job fails or is cancelled so we can report a
+    # decisive failure instead of leaving the required check pending forever.
+    if: always()
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All required jobs succeeded."
