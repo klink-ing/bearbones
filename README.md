@@ -64,8 +64,9 @@ implements:
   source.
 - **Group symbol resolution** — `group('card')` declarations are rewritten to
   frozen object literals, and `[cardGroup.hover]` references are rewritten to
-  the registered Panda condition name (e.g. `_groupHover_card_<hash>`). Works
-  across files via on-demand source scanning.
+  the registered Panda condition name (e.g. `_groupHover_card_a3f4b2c1`, where
+  the suffix is a module-scoped hash). Works across files via on-demand source
+  scanning.
 - **Project pre-scan** — discovers every `group()` declaration during
   `config:resolved` so its conditions are registered before any file is parsed.
 
@@ -111,10 +112,11 @@ pnpm --filter website run codegen  # just regenerate styled-system types
 ```
 
 After a production build, the emitted CSS file at
-`apps/website/dist/assets/index-*.css` will contain rules like:
+`apps/website/dist/assets/index-*.css` will contain rules like (with `a3f4b2c1`
+standing in for the per-group hash):
 
 ```css
-.bearbones-group-card_<hash > :is(:hover, [data-hover]) .groupHover_card_<hash > \:c_blue\.500 {
+.bearbones-group-card_a3f4b2c1:is(:hover, [data-hover]) .groupHover_card_a3f4b2c1\:c_blue\.500 {
   color: var(--colors-blue-500);
 }
 ```
