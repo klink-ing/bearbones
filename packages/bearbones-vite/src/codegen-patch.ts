@@ -1,0 +1,198 @@
+/**
+ * Patch Panda's emitted `styled-system/css/css.d.ts` so the `css()` function
+ * accepts bearbones utility strings in addition to Panda's standard
+ * SystemStyleObject input.
+ *
+ * Wired into Panda's `codegen:prepare` hook in `index.ts`. Runs once per
+ * codegen pass, after `config:resolved` (so every `group()` declaration is
+ * already registered as a Panda condition) and immediately before Panda
+ * writes any artifact to disk.
+ *
+ * The patch is purely a type-level change. The runtime `css()` function in
+ * `css.mjs` is untouched — Panda's implementation already accepts arbitrary
+ * input shapes; the missing piece was the static type surface telling the
+ * compiler those shapes are valid.
+ *
+ * Strategy: locate Panda's `type Styles = ...` line by exact-match anchor and
+ * rewrite it to point at a widened type tree (`BearbonesSystemStyleObject`)
+ * defined inline above. The widened tree mirrors Panda's own `Nested<P>`
+ * structure so that:
+ *   - The whole tree may also be a `BearbonesUtilityName` (utility-string leaf).
+ *   - Every condition / selector value position also accepts a utility string
+ *     or an array of styles (matching the lowering transform's runtime contract).
+ *   - CSS property values (`P` in Panda's recursion) remain strict — utility
+ *     strings are *not* accepted as values for `padding`, `color`, etc.
+ *
+ * If Panda's emitted format ever changes such that the anchor isn't found,
+ * the patch throws a recognizable error rather than silently producing wrong
+ * types. The build fails loudly and the diagnosis is one Panda changelog
+ * read away.
+ */
+
+import { listUtilities } from "./utility-map.ts";
+
+/**
+ * The anchor we replace in Panda's emitted `css.d.ts`. Captured verbatim from
+ * `apps/website/styled-system/css/css.d.ts` after a real `panda codegen` run.
+ * If Panda renames `Styles` or restructures the file, this anchor stops
+ * matching and `patchCssArtifact` throws.
+ */
+const STYLES_ANCHOR = "type Styles = SystemStyleObject | undefined | null | false";
+
+/**
+ * Patch the source of a single `styled-system/css/css.d.ts` file. Returns the
+ * patched source string. Pure function — no I/O, no side effects.
+ *
+ * Throws if the source doesn't contain the expected anchor. The thrown error
+ * names the missing anchor explicitly so the failure is self-diagnosing.
+ */
+export function patchCssArtifact(source: string, utilityNames: readonly string[]): string {
+  if (!source.includes(STYLES_ANCHOR)) {
+    throw new Error(
+      `@bearbones/vite codegen-patch: expected anchor not found in css.d.ts.\n` +
+        `Anchor: ${JSON.stringify(STYLES_ANCHOR)}\n` +
+        `This usually means a Panda upgrade changed the emitted format. ` +
+        `Re-capture the anchor from a fresh \`panda codegen\` run and update ` +
+        `STYLES_ANCHOR in packages/bearbones-vite/src/codegen-patch.ts.`,
+    );
+  }
+
+  const utilityUnion = renderUtilityUnion(utilityNames);
+  const injectedTypes = renderInjectedTypes(utilityUnion);
+  const patchedStyles = "type Styles = BearbonesSystemStyleObject | undefined | null | false";
+
+  // Insert the injected types immediately after the existing `import` line so
+  // they're declared before the `Styles` alias references them. The types pull
+  // in `Nested`, `Selectors`, `AnySelector`, `Conditions`, `SystemProperties`,
+  // and `CssVarProperties` from sibling artifact files inside `../types/`.
+  const importBlock = renderImportBlock();
+
+  // Place injected imports + types directly after Panda's existing
+  // `import type { SystemStyleObject } ...` line so we don't fight Panda's
+  // own header ordering.
+  const pandaImportMarker = "import type { SystemStyleObject } from '../types/index';";
+  if (!source.includes(pandaImportMarker)) {
+    throw new Error(
+      `@bearbones/vite codegen-patch: expected Panda import marker not found.\n` +
+        `Marker: ${JSON.stringify(pandaImportMarker)}\n` +
+        `If Panda changed how it imports SystemStyleObject, update the marker ` +
+        `in packages/bearbones-vite/src/codegen-patch.ts.`,
+    );
+  }
+
+  return source
+    .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
+    .replace(STYLES_ANCHOR, patchedStyles);
+}
+
+/**
+ * Convenience wrapper that patches against the live utility list. Used by the
+ * `codegen:prepare` hook in production; tests pass a fixed list to keep
+ * snapshots stable.
+ */
+export function patchCssArtifactLive(source: string): string {
+  return patchCssArtifact(source, listUtilities());
+}
+
+function renderUtilityUnion(names: readonly string[]): string {
+  if (names.length === 0) return "never";
+  // One name per line for readability inside the generated file.
+  return names.map((n) => `  | ${JSON.stringify(n)}`).join("\n");
+}
+
+function renderImportBlock(): string {
+  return [
+    "import type { Nested, Conditions } from '../types/conditions';",
+    "import type { Selectors, AnySelector } from '../types/selectors';",
+    "import type { SystemProperties, CssVarProperties } from '../types/style-props';",
+  ].join("\n");
+}
+
+function renderInjectedTypes(utilityUnion: string): string {
+  // The recursion shape mirrors Panda's `Nested<P>`. The two material
+  // additions are the `BearbonesUtilityName` leaf (whole tree may also be a
+  // utility string) and `readonly BearbonesNested<P>[]` at every condition /
+  // selector value position (matching the transform's runtime acceptance of
+  // arrays of utility strings).
+  //
+  // BearbonesNestedObject is intentionally factored out from BearbonesNested
+  // so that `Omit<..., 'base'>` (used to define BearbonesSystemStyleObject —
+  // mirroring Panda's own SystemStyleObject) wraps ONLY the object branch.
+  // Distributing `Omit` over `BearbonesUtilityName | ObjectType` widens the
+  // string-literal union to a structural string type and the closed-set
+  // checking would silently break.
+  return [
+    "export type BearbonesUtilityName =",
+    utilityUnion,
+    ";",
+    "",
+    "// Template-literal type matching the keys produced by `BearbonesGroup`'s",
+    "// runtime shape. The specific hash suffix is opaque to consumers (it's",
+    "// computed at build time from the declaring module's path), so the type",
+    "// must accept any `${string}` in that position. Panda's own `Conditions`",
+    "// interface contains the *resolved* hashed names — sufficient for runtime",
+    "// extraction but insufficient for type-checking call sites that reference",
+    "// the group symbol's `hover` / `focus` / etc. properties via computed key.",
+    "export type BearbonesGroupConditionKey =",
+    "  | `_groupHover_${string}_${string}`",
+    "  | `_groupFocus_${string}_${string}`",
+    "  | `_groupFocusVisible_${string}_${string}`",
+    "  | `_groupActive_${string}_${string}`",
+    "  | `_groupDisabled_${string}_${string}`;",
+    "",
+    "type BearbonesNestedObject<P> = P & {",
+    "  [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
+    "} & {",
+    "  [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
+    "} & {",
+    "  [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
+    "} & {",
+    "  [K in BearbonesGroupConditionKey]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
+    "};",
+    "",
+    "export type BearbonesNested<P> = BearbonesUtilityName | BearbonesNestedObject<P>;",
+    "",
+    "export type BearbonesSystemStyleObject =",
+    "  | BearbonesUtilityName",
+    "  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, 'base'>;",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Patch a Panda `Artifact[]` array in-place by finding the `css-fn` artifact's
+ * `css.d.ts` file and rewriting its `code`. Used by the `codegen:prepare` hook.
+ *
+ * No-op (returns the input unchanged) if the artifact isn't present. Some
+ * Panda invocations only regenerate a subset of artifacts; the type patch
+ * only matters when the css.d.ts itself is being written.
+ */
+export function patchArtifacts(artifacts: PandaArtifact[]): PandaArtifact[] {
+  return artifacts.map((artifact) => {
+    if (artifact.id !== "css-fn") return artifact;
+    return {
+      ...artifact,
+      files: artifact.files.map((file) => {
+        if (file.file !== "css.d.ts") return file;
+        if (file.code === undefined) return file;
+        return { ...file, code: patchCssArtifactLive(file.code) };
+      }),
+    };
+  });
+}
+
+/**
+ * Local mirror of Panda's `Artifact` shape. We don't take a runtime dep on
+ * `@pandacss/types` — the structural type is stable enough across versions
+ * that the local definition is preferable to a peer-dep relationship.
+ */
+export interface PandaArtifactFile {
+  file: string;
+  code: string | undefined;
+}
+
+export interface PandaArtifact {
+  id: string;
+  dir?: string[];
+  files: PandaArtifactFile[];
+}

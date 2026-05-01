@@ -12,9 +12,10 @@
  *
  * Future work:
  * - Generate this table from `@bearbones/preset` so the preset is the single
- *   source of truth for utility names + token references.
- * - Generate the matching `BearbonesUtilityName` type union in
- *   `@bearbones/codegen`.
+ *   source of truth for utility names + token references. Today the type
+ *   union and the runtime map are both derived from the scale arrays below;
+ *   driving them off the resolved Panda preset would let host projects
+ *   extend or narrow the vocabulary without touching this file.
  */
 
 export type StyleFragment = Record<string, unknown>;
@@ -259,8 +260,8 @@ export function resolveUtility(name: string): StyleFragment | undefined {
 }
 
 /**
- * Snapshot of every recognized utility name. Consumed by `@bearbones/codegen`
- * to emit the `BearbonesUtilityName` type union.
+ * Snapshot of every recognized utility name. Consumed by `codegen-patch.ts`
+ * to emit the `BearbonesUtilityName` type union into the patched `css.d.ts`.
  */
 export function listUtilities(): readonly string[] {
   return Array.from(UTILITY_MAP.keys());

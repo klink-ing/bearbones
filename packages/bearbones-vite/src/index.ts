@@ -38,6 +38,7 @@
 import { transform } from "./transform.ts";
 import { buildGroupConditions } from "./group-registry.ts";
 import { prescanGroups } from "./prescan.ts";
+import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
 
 export interface BearbonesHooksOptions {
   /**
@@ -62,6 +63,11 @@ export interface BearbonesHooksOptions {
  *     parsing, this is also re-invoked through Panda's config-change
  *     mechanism on rebuilds; new groups added during a session take effect
  *     after the next parser pass completes.
+ *
+ *   - `codegen:prepare` — patches Panda's emitted `styled-system/css/css.d.ts`
+ *     in memory before it's written to disk, widening the `css()` signature
+ *     to accept bearbones utility strings. See `codegen-patch.ts` for the
+ *     patch shape and rationale.
  */
 export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
   return {
@@ -94,6 +100,12 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       const result = transform({ filePath, source: content });
       if (result.content === undefined) return;
       return result.content;
+    },
+    "codegen:prepare": ({ artifacts }: { artifacts: PandaArtifact[] }): PandaArtifact[] => {
+      // Widen the css() type signature to accept bearbones utility strings.
+      // The patch is pure: same input artifacts → same output. See
+      // codegen-patch.ts for the actual rewrite logic.
+      return patchArtifacts(artifacts);
     },
   };
 }
@@ -150,9 +162,13 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
   };
 }
 
-// Re-export internal pieces that the test suite and codegen consume.
+// Re-export internal pieces that the test suite consumes.
 export { listGroups } from "./group-registry.ts";
 export { listUtilities } from "./utility-map.ts";
-// Re-export the derived utility-name union so consumers (and the bearbones
-// facade) can use it before `@bearbones/codegen` is fully wired up.
+// Re-export the derived utility-name union so consumers (and the `bearbones`
+// facade) can use it for typing their own helpers. The closed-set version
+// also lands in the patched `css.d.ts` via `codegen-patch.ts`.
 export type { BearbonesUtilityName } from "./utility-map.ts";
+// Expose the codegen patch helpers for tests / advanced wiring.
+export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
+export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";

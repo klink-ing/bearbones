@@ -2,17 +2,13 @@
 // hook fires, every `css('p-4', ...)` call has been lowered to Panda's native
 // object form before the extractor sees it, so the resulting CSS file contains
 // the expected atomic classes.
-import { css as _css } from "../styled-system/css";
-import { cx, type BearbonesStyleInput } from "bearbones";
+//
+// The bearbones `codegen:prepare` hook patches Panda's emitted `css.d.ts` so
+// `css()` accepts utility strings + group condition keys natively — no cast
+// needed at the call site.
+import { css } from "../styled-system/css";
+import { cx } from "bearbones";
 import { cardGroup, rowGroup } from "./groups.ts";
-
-// Until @bearbones/codegen ships full type-augmentation that patches Panda's
-// generated css() signature in place, cast Panda's runtime function to a
-// wrapper that accepts BearbonesStyleInput. Invalid utility names (typos,
-// unknown shorthands like "ypg") fail to type-check at the call site because
-// they don't match BearbonesUtilityName.
-type TypedCss = (...args: BearbonesStyleInput[]) => string;
-const css = _css as unknown as TypedCss;
 
 export function Demo() {
   return (
@@ -23,7 +19,6 @@ export function Demo() {
       <article
         className={cx(
           css("p-4", "p-8", "rounded-md", "shadow-sm", "bg-white", {
-            _focus: [""],
             _hover: ["bg-blue-800", "text-white"],
           }),
           cardGroup.anchor,
