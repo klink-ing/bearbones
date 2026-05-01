@@ -119,7 +119,7 @@ packages/
 
 ## Local development
 
-Node 22+ and pnpm 10. Install [Vite+'s `vp`
+Node 24+ (the active LTS) and pnpm 10. Install [Vite+'s `vp`
 CLI](https://viteplus.dev/guide/install) globally, then:
 
 ```bash

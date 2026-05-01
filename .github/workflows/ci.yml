@@ -19,19 +19,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      # `setup-vp` is the official Vite+ setup action: it installs Vite+,
+      # the matching Node.js version, the configured package manager, and
+      # handles the dependency cache. Replaces separate setup-node + pnpm
+      # action-setup + manual cache wiring.
+      #
+      # `node-version-file: package.json` reads the engines.node range so
+      # the lockfile + engines field stay the single source of truth; bumping
+      # Node only requires editing package.json.
+      - uses: voidzero-dev/setup-vp@v1
         with:
-          version: 10.33.0
+          node-version-file: package.json
+          cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          # Match the engines.node floor in package.json. Using a recent
-          # 22.x avoids `vp` requiring a newer runtime than CI provides.
-          node-version: "22"
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - run: vp install
 
       - name: Run check (lint, format, typecheck, tests)
-        run: pnpm run check
+        run: vp run check
+
+  # Aggregator job — the single name listed in the branch ruleset's required
+  # status checks. Adding a new CI job means appending it to `needs:` here;
+  # no ruleset edit required.
+  ci-success:
+    name: ci-success
+    needs: [check]
+    runs-on: ubuntu-latest
+    # Run even when a needed job fails or is cancelled so we can report a
+    # decisive failure instead of leaving the required check pending forever.
+    if: always()
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All required jobs succeeded."
