@@ -101,10 +101,12 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       if (result.content === undefined) return;
       return result.content;
     },
+    // Mirrors the existing pattern of `config:resolved` (which takes
+    // `config: any`): we keep the public hook signature loosely typed and
+    // strict-type the internal logic via `PandaArtifact`. Importing
+    // @pandacss/types here would drag pkg-types → typescript transitive
+    // imports into the rolldown bundle.
     "codegen:prepare": ({ artifacts }: { artifacts: PandaArtifact[] }): PandaArtifact[] => {
-      // Widen the css() type signature to accept bearbones utility strings.
-      // The patch is pure: same input artifacts → same output. See
-      // codegen-patch.ts for the actual rewrite logic.
       return patchArtifacts(artifacts);
     },
   };

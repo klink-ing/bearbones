@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { patchCssArtifact, patchArtifacts, type PandaArtifact } from "../src/codegen-patch.ts";
 
-const FIXTURE_PATH = join(__dirname, "fixtures", "panda-css.d.ts");
+// Fixture is named `.d.ts.txt` (not `.d.ts`) so oxfmt and tsc skip it.
+// We need Panda's *exact* emitted bytes — including its single-quote import
+// style and missing trailing semicolons — to assert that our string-based
+// patcher's anchors match what the live Panda codegen produces. Letting the
+// repo formatter rewrite this file would silently break the marker match.
+const FIXTURE_PATH = join(__dirname, "fixtures", "panda-css.d.ts.txt");
 const FIXTURE_SOURCE = readFileSync(FIXTURE_PATH, "utf8");
 
 const SAMPLE_UTILITIES = ["p-4", "bg-blue-500", "flex"] as const;

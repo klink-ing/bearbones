@@ -61,5 +61,6 @@ interface CssFunction {
   raw: CssRawFunction
 }
 
-export declare const css: CssFunction;"
+export declare const css: CssFunction;
+"
 `;

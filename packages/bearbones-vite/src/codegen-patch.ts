@@ -182,17 +182,60 @@ export function patchArtifacts(artifacts: PandaArtifact[]): PandaArtifact[] {
 }
 
 /**
- * Local mirror of Panda's `Artifact` shape. We don't take a runtime dep on
- * `@pandacss/types` — the structural type is stable enough across versions
- * that the local definition is preferable to a peer-dep relationship.
+ * Local mirror of Panda's `Artifact` shape and `ArtifactId` union, copied
+ * verbatim from `@pandacss/types/dist/artifact`. We mirror rather than
+ * import because `@pandacss/types/index` transitively re-exports through
+ * `config.d.ts` which imports `pkg-types`, which in turn fails to resolve
+ * a `CompilerOptions` export against the `typescript` version this project
+ * pins. Mirroring keeps types accurate at the hook boundary without
+ * dragging unrelated transitive deps into rolldown's bundle pass.
+ *
+ * If Panda renames or restructures the artifact shape, the type-check at
+ * the hook signature in `index.ts` (which uses these types) catches the
+ * drift; bump the mirror to match.
  */
+export type PandaArtifactId =
+  | "helpers"
+  | "keyframes"
+  | "design-tokens"
+  | "types"
+  | "css-fn"
+  | "cva"
+  | "sva"
+  | "cx"
+  | "create-recipe"
+  | "recipes"
+  | "recipes-index"
+  | "patterns"
+  | "patterns-index"
+  | "jsx-is-valid-prop"
+  | "jsx-helpers"
+  | "jsx-factory"
+  | "jsx-patterns"
+  | "jsx-create-style-context"
+  | "jsx-patterns-index"
+  | "css-index"
+  | "themes"
+  | "package.json"
+  | "types-jsx"
+  | "types-entry"
+  | "types-styles"
+  | "types-conditions"
+  | "types-gen"
+  | "types-gen-system"
+  | "static-css"
+  | "styles.css"
+  | "styles"
+  | `recipes.${string}`
+  | `patterns.${string}`;
+
 export interface PandaArtifactFile {
   file: string;
   code: string | undefined;
 }
 
 export interface PandaArtifact {
-  id: string;
+  id: PandaArtifactId;
   dir?: string[];
   files: PandaArtifactFile[];
 }
