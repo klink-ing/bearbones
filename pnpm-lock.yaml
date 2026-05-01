@@ -45,9 +45,6 @@ importers:
 
   apps/website:
     dependencies:
-      '@bearbones/codegen':
-        specifier: workspace:*
-        version: link:../../packages/bearbones-codegen
       '@bearbones/preset':
         specifier: workspace:*
         version: link:../../packages/bearbones-preset
@@ -87,22 +84,6 @@ importers:
         version: 0.1.20(@types/node@25.6.0)(@voidzero-dev/vite-plus-core@0.1.20(@types/node@25.6.0)(jiti@2.6.1)(typescript@6.0.3)(yaml@2.8.3))(jiti@2.6.1)(typescript@6.0.3)(yaml@2.8.3)
 
   packages/bearbones:
-    dependencies:
-      '@bearbones/vite':
-        specifier: workspace:*
-        version: link:../bearbones-vite
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 24.12.2
-      typescript:
-        specifier: ^6.0.2
-        version: 6.0.3
-      vite-plus:
-        specifier: ^0.1.20
-        version: 0.1.20(@types/node@24.12.2)(jiti@2.6.1)(typescript@6.0.3)(vite@8.0.10(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3))(yaml@2.8.3)
-
-  packages/bearbones-codegen:
     dependencies:
       '@bearbones/vite':
         specifier: workspace:*

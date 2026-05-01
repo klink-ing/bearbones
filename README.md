@@ -113,8 +113,7 @@ apps/website/             End-to-end demo + visual proof
 packages/
   bearbones/              Public facade — cx, group, type re-exports
   bearbones-preset/       Panda preset
-  bearbones-vite/         The lowering transform (Panda hook + Vite plugin)
-  bearbones-codegen/      Type generator (skeleton)
+  bearbones-vite/         Lowering transform + css.d.ts patcher (Panda hooks + Vite plugin)
 ```
 
 ## Local development
@@ -133,10 +132,6 @@ pnpm run dev                       # demo at http://localhost:5173
 
 Tracked in the design spec:
 
-- **Type augmentation.** Today the demo casts Panda's `css()` to a typed
-  wrapper that accepts `BearbonesUtilityName`. `@bearbones/codegen` should
-  patch Panda's generated `css()` signature in place so the cast becomes
-  unnecessary.
 - **Facade rewriting.** `import { css } from 'bearbones'` should resolve to
   the host project's `styled-system/css`. Today consumers import from the
   relative path directly.
@@ -144,3 +139,11 @@ Tracked in the design spec:
   spacing, colors, type, radii, shadows. Adding entries means appending to the
   scale arrays in `packages/bearbones-vite/src/utility-map.ts` — both the
   runtime map and the `BearbonesUtilityName` type derive from those arrays.
+
+Done:
+
+- ~~**Type augmentation.**~~ The demo no longer needs a `TypedCss` cast.
+  `@bearbones/vite`'s `codegen:prepare` hook patches Panda's emitted
+  `styled-system/css/css.d.ts` directly, widening the `css()` signature to
+  accept utility strings + group condition keys. See
+  `packages/bearbones-vite/src/codegen-patch.ts`.
