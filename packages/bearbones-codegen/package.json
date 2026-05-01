@@ -1,0 +1,27 @@
+{
+  "name": "@bearbones/codegen",
+  "version": "0.0.0",
+  "description": "Type generator for bearbones — emits BearbonesUtilityName + group condition unions.",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@bearbones/vite": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "^6.0.2",
+    "vite-plus": "^0.1.20"
+  }
+}

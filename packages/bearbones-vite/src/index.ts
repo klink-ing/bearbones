@@ -1,0 +1,158 @@
+/**
+ * Public entry point for `@bearbones/vite`.
+ *
+ * This module ships two integration points that work together:
+ *
+ *   1. `bearbonesHooks()` — Panda hooks (`config:resolved` + `parser:before`)
+ *      that lower utility strings + group symbols when Panda extracts CSS.
+ *      This is what makes the right rules appear in `styled-system/styles.css`.
+ *
+ *   2. `bearbonesVitePlugin()` — a Vite plugin that runs the SAME lowering
+ *      on every `.ts/.tsx` file before it reaches the browser. Without this,
+ *      the dev server would ship the original `css('p-4', ...)` call sites
+ *      to the browser, and Panda's runtime `css()` would receive utility
+ *      strings it doesn't understand (returning empty or invalid classes).
+ *
+ * Both layers share a single `transform()` implementation, so behavior is
+ * consistent between the static extraction and the runtime JS.
+ *
+ *   import { defineConfig } from '@pandacss/dev';
+ *   import { bearbonesPreset } from '@bearbones/preset';
+ *   import { bearbonesHooks } from '@bearbones/vite';
+ *
+ *   export default defineConfig({
+ *     presets: [bearbonesPreset()],
+ *     hooks: bearbonesHooks(),
+ *   });
+ *
+ *   // vite.config.ts
+ *   import { defineConfig } from 'vite';
+ *   import react from '@vitejs/plugin-react';
+ *   import { bearbonesVitePlugin } from '@bearbones/vite';
+ *
+ *   export default defineConfig({
+ *     plugins: [bearbonesVitePlugin(), react()],
+ *   });
+ */
+
+import { transform } from "./transform.ts";
+import { buildGroupConditions } from "./group-registry.ts";
+import { prescanGroups } from "./prescan.ts";
+
+export interface BearbonesHooksOptions {
+  /**
+   * If true (default), surface a verbose log line each time the parser:before
+   * hook rewrites a file. Useful while tracking down extraction issues; turn
+   * off in production builds.
+   */
+  verbose?: boolean;
+}
+
+/**
+ * Return a Panda hooks object that wires bearbones into Panda's pipeline.
+ *
+ * Hooks set:
+ *   - `parser:before` — rewrites `group()` declarations and lowers `css()`,
+ *     `cva()`, `sva()` argument shapes into Panda's native form. After this
+ *     hook returns, Panda's extractor parses normalized source as if it were
+ *     authored that way directly.
+ *
+ *   - `config:resolved` — registers the conditions for every group discovered
+ *     so far. Because `config:resolved` fires once at startup before any
+ *     parsing, this is also re-invoked through Panda's config-change
+ *     mechanism on rebuilds; new groups added during a session take effect
+ *     after the next parser pass completes.
+ */
+export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
+  return {
+    "config:resolved": ({ config }: { config: any }) => {
+      // Pre-scan every included file for `group()` declarations so the
+      // resulting condition set is present in the config before Panda's
+      // extractor runs.
+      const cwd = config.cwd ?? process.cwd();
+      const include = (config.include as string[] | undefined) ?? [];
+      const exclude = (config.exclude as string[] | undefined) ?? [];
+      if (include.length > 0) {
+        prescanGroups({ cwd, include, exclude });
+      }
+      const conditions = buildGroupConditions();
+      if (Object.keys(conditions).length === 0) return;
+      // Panda's resolved config already flattened `extend` blocks before this
+      // hook fires, so merging into `extend` again wraps the conditions in a
+      // sub-object that the resolver mistakes for a nested condition group
+      // (and then crashes calling `.startsWith` on the object). Merge into
+      // the top-level conditions map instead.
+      config.conditions = { ...config.conditions, ...conditions };
+    },
+    "parser:before": ({
+      filePath,
+      content,
+    }: {
+      filePath: string;
+      content: string;
+    }): string | void => {
+      const result = transform({ filePath, source: content });
+      if (result.content === undefined) return;
+      return result.content;
+    },
+  };
+}
+
+export default bearbonesHooks;
+
+/**
+ * Vite plugin that runs the bearbones lowering transform on every TSX/TS
+ * module before it's delivered to the browser.
+ *
+ * This is required for dev-server and SSR runtime behavior. Static CSS
+ * extraction is handled by `bearbonesHooks()` plugged into Panda's config;
+ * this plugin handles the JS side so runtime `css('p-4', ...)` calls are
+ * actually rewritten to `css({ p: '4' }, ...)` before they reach Panda's
+ * runtime helper.
+ */
+export interface BearbonesVitePluginOptions {
+  /**
+   * Glob patterns mirrored from your Panda config's `include`. Used by the
+   * plugin's pre-scan to discover `group()` declarations across the project
+   * before the first module is transformed. Defaults to a sensible mirror
+   * of `./src/**\/*.{ts,tsx}` if not provided.
+   */
+  include?: readonly string[];
+  exclude?: readonly string[];
+}
+
+export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
+  name: string;
+  enforce: "pre";
+  configResolved: (config: { root: string }) => void;
+  transform: (code: string, id: string) => { code: string; map: null } | null;
+} {
+  let prescanned = false;
+  return {
+    name: "bearbones",
+    // Run before other plugins so the lowered source is what react/jsx and
+    // panda's own Vite plugin see.
+    enforce: "pre",
+    configResolved(config: { root: string }) {
+      if (prescanned) return;
+      prescanned = true;
+      const include = options.include ?? ["./src/**/*.{ts,tsx}"];
+      const exclude = options.exclude ?? [];
+      prescanGroups({ cwd: config.root, include, exclude });
+    },
+    transform(code: string, id: string) {
+      // Vite passes the file's full URL/path; ignore non-source-file ids.
+      if (!/\.(?:tsx?|jsx?|mts|cts|mtsx?|ctsx?)$/.test(id)) return null;
+      const result = transform({ filePath: id, source: code });
+      if (result.content === undefined) return null;
+      return { code: result.content, map: null };
+    },
+  };
+}
+
+// Re-export internal pieces that the test suite and codegen consume.
+export { listGroups } from "./group-registry.ts";
+export { listUtilities } from "./utility-map.ts";
+// Re-export the derived utility-name union so consumers (and the bearbones
+// facade) can use it before `@bearbones/codegen` is fully wired up.
+export type { BearbonesUtilityName } from "./utility-map.ts";
