@@ -28,7 +28,7 @@ catalogs:
       specifier: ^19.2.5
       version: 19.2.5
     vite-plus:
-      specifier: latest
+      specifier: ^0.1.20
       version: 0.1.20
 
 overrides:
