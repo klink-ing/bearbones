@@ -31,10 +31,9 @@
 
 import { listUtilities } from "./utility-map.ts";
 import {
-  buildRelationConditionName,
+  buildRelationSelector,
   listMarkers,
   MARKER_STATES,
-  modifierHash,
   STATE_PSEUDO,
   type MarkerState,
   type RegisteredMarker,
@@ -94,30 +93,18 @@ export function patchCssArtifact(
   }
 
   const markerRegistryAugmentation = renderMarkerRegistryAugmentation(markers);
-  const conditionsAugmentation = renderConditionsAugmentation(markers);
 
   // The marker-registry augmentation is appended at the end of the file. It's
-  // a `declare module 'bearbones'` block that injects literal-string call
-  // overloads + `_<state>` builder properties for every marker discovered by
-  // the prescan. Consumers' `cardMarker._hover.is.ancestor` then has type
-  // `'_marker_card_a27adb16_ancestor_<modhash>'` (specific) instead of a
-  // template-literal fallback — eliminating the string-index widening that
-  // template literals cause when used as computed keys alongside other static
-  // keys in the same object literal.
-  //
-  // The conditions augmentation is the open-set companion to the closed-set
-  // marker registry: it widens `keyof Conditions` with template-literal index
-  // signatures `_marker_<suffix>_<rel>_${string}` so the wide fallback
-  // overload of `marker(...)` (returning template-literal-typed condition
-  // keys) matches as a computed key even before the prescan has registered
-  // the specific modifier hash. CSS extraction still lags by one codegen
-  // pass for new modifiers, but TypeScript stays green throughout.
+  // a `declare module 'bearbones'` block listing every marker the project
+  // contains. Each entry pairs the anchor class with the typed `_<state>`
+  // builders, plus a wide-string call signature. The builder return types are
+  // raw selectors anchored at `bearbones-marker-<suffix>`, which Panda's
+  // `parseCondition` accepts directly — no `keyof Conditions` augmentation
+  // needed, no per-modifier overloads, no condition-name hashing.
   return (
     source
       .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
-      .replace(STYLES_ANCHOR, patchedStyles) +
-    markerRegistryAugmentation +
-    conditionsAugmentation
+      .replace(STYLES_ANCHOR, patchedStyles) + markerRegistryAugmentation
   );
 }
 
@@ -190,15 +177,13 @@ function renderInjectedTypes(utilityUnion: string): string {
 /**
  * Render a `declare module 'bearbones'` block that augments the empty
  * `BearbonesMarkerRegistry` interface in the bearbones package with one
- * entry per marker discovered by the prescan. Each entry pairs the anchor
- * class with the typed `_<state>` builders, plus closed-set call overloads
- * for every modifier the prescan saw at a usage site.
+ * entry per declared marker. Each entry pairs the anchor class with the
+ * typed `_<state>` builders (raw-selector return types) and a single
+ * wide-string call signature.
  *
- * Consumers' `cardMarker._hover.is.ancestor` then resolves through the
- * package's `BearbonesMarkerRuntime<Id>` type to a specific literal that's a
- * member of `keyof Conditions` — letting `[cardMarker._hover.is.ancestor]: ...`
- * narrow correctly inside object literals without forcing TypeScript to
- * widen to a string index signature.
+ * No per-modifier overloads, no `keyof Conditions` augmentation — the chain
+ * lowers to raw selectors that Panda accepts directly via
+ * `BearbonesNestedObject<P>`'s `[K in AnySelector]` branch.
  */
 function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]): string {
   if (markers.length === 0) return "";
@@ -208,9 +193,9 @@ function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]):
     "",
     "",
     "// --- Marker registry: emitted by @bearbones/vite codegen:prepare ---",
-    "// One entry per marker discovered by the prescan. Augments the empty",
-    "// `BearbonesMarkerRegistry` interface in the bearbones package so",
-    "// `marker(id)` returns a shape with literal-string condition keys.",
+    "// One entry per `marker(...)` declaration the transform has seen. Augments",
+    "// the empty `BearbonesMarkerRegistry` interface in the bearbones package",
+    "// so `marker(id)` returns a shape with literal-typed raw-selector keys.",
     "declare module 'bearbones' {",
     "  interface BearbonesMarkerRegistry {",
     entries,
@@ -222,41 +207,24 @@ function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]):
 
 /**
  * Render the per-marker entry. Each entry is a function-with-properties
- * intersection: the call signature handles `marker(':sel')` (one overload per
- * registered modifier-literal, plus a wide string fallback), and the `&`
+ * intersection: the call signature handles `marker(':sel')` (one wide-string
+ * overload returning template-literal-typed raw selectors), and the `&`
  * clause attaches the anchor class and the underscore builder forms.
  *
- * Why a function-with-`&`-properties: TS infers the call signature from the
- * function half (so `marker(':hover')` narrows to the right overload) and
- * still resolves member access (`marker.anchor`, `marker._focus`) through
- * the intersected object type. This is the standard trick for a callable
- * object shape and is what TypeScript's own emit uses for hybrid types.
+ * Why a function-with-`&`-properties: TS resolves member access (`marker.anchor`,
+ * `marker._focus`) through the intersected object type while keeping the
+ * call signature usable. This is the standard trick for a callable object
+ * shape and is what TypeScript's own emit uses for hybrid types.
  */
 function renderMarkerEntry(marker: RegisteredMarker): string {
   const propertyFields: string[] = [
     `      readonly anchor: ${JSON.stringify(marker.anchorClass)};`,
     ...MARKER_STATES.map((state) => renderUnderscoreBuilder(state, marker, /*indent*/ 6)),
   ];
-  // Distinct call-form modifiers (the underscore builders already cover the
-  // pseudo-class equivalents emitted by STATE_PSEUDO, so we don't repeat them).
-  const builtinPseudos = new Set<string>(MARKER_STATES.map((s) => STATE_PSEUDO[s]));
-  const callOverloads = Array.from(marker.relations.values())
-    .map((rel) => rel.modifier)
-    .filter((modifier, i, arr) => arr.indexOf(modifier) === i)
-    .filter((modifier) => !builtinPseudos.has(modifier))
-    .map((modifier) => renderCallOverload(modifier, marker, /*indent*/ 6));
-
   const objectShape = `{
 ${propertyFields.join("\n")}
     }`;
-  // The function half. Empty when no call-form modifiers were registered;
-  // we still emit a wide fallback so `m(':any')` is callable in source even
-  // before the prescan has seen it (TS narrows to `string` rather than the
-  // overload set, which is fine — the runtime synthesizes a working condition
-  // from the inline FNV-1a hash so the call won't fail at runtime, just
-  // won't have an emitted CSS rule until prescan picks the modifier up).
-  const callShape = renderCallShape(callOverloads, marker);
-
+  const callShape = renderCallShape(marker);
   return `    ${JSON.stringify(marker.id)}: ${callShape} & ${objectShape};`;
 }
 
@@ -267,69 +235,24 @@ function renderUnderscoreBuilder(
 ): string {
   const pad = " ".repeat(indent);
   const modifier = STATE_PSEUDO[state];
-  const ancestor = `_${buildRelationConditionName(marker.suffix, "ancestor", modifier)}`;
-  const descendant = `_${buildRelationConditionName(marker.suffix, "descendant", modifier)}`;
-  const sibling = `_${buildRelationConditionName(marker.suffix, "sibling", modifier)}`;
+  const ancestor = buildRelationSelector(marker.anchorClass, modifier, "ancestor");
+  const descendant = buildRelationSelector(marker.anchorClass, modifier, "descendant");
+  const sibling = buildRelationSelector(marker.anchorClass, modifier, "sibling");
   return `${pad}readonly _${state}: { readonly is: { readonly ancestor: ${JSON.stringify(ancestor)}; readonly descendant: ${JSON.stringify(descendant)}; readonly sibling: ${JSON.stringify(sibling)} } };`;
 }
 
-function renderCallOverload(modifier: string, marker: RegisteredMarker, indent: number): string {
-  const pad = " ".repeat(indent);
-  const ancestor = `_${buildRelationConditionName(marker.suffix, "ancestor", modifier)}`;
-  const descendant = `_${buildRelationConditionName(marker.suffix, "descendant", modifier)}`;
-  const sibling = `_${buildRelationConditionName(marker.suffix, "sibling", modifier)}`;
-  return `${pad}(selector: ${JSON.stringify(modifier)}): { readonly is: { readonly ancestor: ${JSON.stringify(ancestor)}; readonly descendant: ${JSON.stringify(descendant)}; readonly sibling: ${JSON.stringify(sibling)} } };`;
-}
-
-function renderCallShape(overloads: string[], marker: RegisteredMarker): string {
-  // Always include a wide fallback overload after the registered literals.
-  // It returns a template-literal-typed builder (parameterized by the same
-  // suffix the synthesized record uses), so unregistered modifiers still
-  // produce a string that's at least structurally inside the marker's
-  // condition namespace. The codegen-patch separately widens the patched
-  // `Conditions` to include those template-literal keys (see below).
-  const wide = `      (selector: string): { readonly is: { readonly ancestor: \`_marker_${marker.suffix}_ancestor_\${string}\`; readonly descendant: \`_marker_${marker.suffix}_descendant_\${string}\`; readonly sibling: \`_marker_${marker.suffix}_sibling_\${string}\` } };`;
-  const all = [...overloads, wide].join("\n");
+function renderCallShape(marker: RegisteredMarker): string {
+  // Single wide-string overload. Returns template-literal-typed raw selectors
+  // anchored at the marker's hashed class. Each variant matches Panda's
+  // `AnySelector` (`${string}&` | `&${string}`), so the result is accepted as
+  // a computed key in `BearbonesNestedObject<P>` without further help.
+  // Sibling is ordered `& ~ <anchor>, <anchor> ~ &` so it starts with `&`
+  // (matching `&${string}`); CSS-wise the order of comma-joined selectors
+  // doesn't matter.
   return `{
-${all}
+      (selector: string): { readonly is: { readonly ancestor: \`.${marker.anchorClass}\${string} &\`; readonly descendant: \`&:has(.${marker.anchorClass}\${string})\`; readonly sibling: \`& ~ .${marker.anchorClass}\${string}, .${marker.anchorClass}\${string} ~ &\` } };
     }`;
 }
-
-/**
- * Render a `Conditions` interface augmentation that registers the open-set of
- * relational marker condition keys (`_marker_<suffix>_<rel>_<modhash>`) so
- * Panda's `keyof Conditions`-driven typing accepts them as computed-key
- * positions in `css({...})`. The literal keys for already-prescanned
- * modifiers are also covered by this template-literal slot, so when a user
- * adds a new `m(':never-seen').is.ancestor` call before `panda codegen`
- * re-runs, the type still accepts it — only the emitted CSS lags by one
- * codegen pass.
- */
-function renderConditionsAugmentation(markers: readonly RegisteredMarker[]): string {
-  if (markers.length === 0) return "";
-  const entries: string[] = [];
-  for (const marker of markers) {
-    for (const rel of ["ancestor", "descendant", "sibling"] as const) {
-      const literal = `\`_marker_${marker.suffix}_${rel}_\${string}\``;
-      entries.push(`    [k: ${literal}]: string;`);
-    }
-  }
-  return [
-    "",
-    "// --- Relational marker conditions: emitted by @bearbones/vite codegen:prepare ---",
-    "// Open-set keys produced by `m(':sel').is.<relation>` chains. Each entry is",
-    "// a template-literal index signature so `keyof Conditions` includes any",
-    "// modifier hash a user might author, even before the prescan registers it.",
-    "declare module '../types/conditions' {",
-    "  interface Conditions {",
-    entries.join("\n"),
-    "  }",
-    "}",
-    "",
-  ].join("\n");
-}
-
-void modifierHash; // re-exported by the registry; we only need the pre-hashed condition names
 
 /**
  * Patch a Panda `Artifact[]` array in-place by finding the `css-fn` artifact's

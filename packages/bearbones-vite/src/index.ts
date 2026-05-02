@@ -37,8 +37,6 @@
  */
 
 import { transform } from "./transform.ts";
-import { buildMarkerConditions } from "./marker-registry.ts";
-import { prescanMarkers } from "./prescan.ts";
 import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
 import { populateUtilityMapFromTokens } from "./utility-map.ts";
 
@@ -55,16 +53,15 @@ export interface BearbonesHooksOptions {
  * Return a Panda hooks object that wires bearbones into Panda's pipeline.
  *
  * Hooks set:
- *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
- *     `cva()`, `sva()` argument shapes into Panda's native form. After this
- *     hook returns, Panda's extractor parses normalized source as if it were
- *     authored that way directly.
+ *   - `config:resolved` — populates the utility-string lookup table from the
+ *     host project's resolved Panda tokens.
  *
- *   - `config:resolved` — registers the conditions for every marker discovered
- *     so far. Because `config:resolved` fires once at startup before any
- *     parsing, this is also re-invoked through Panda's config-change
- *     mechanism on rebuilds; new markers added during a session take effect
- *     after the next parser pass completes.
+ *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
+ *     `cva()`, `sva()` argument shapes into Panda's native form. Relational
+ *     marker chains (`m(':sel').is.<rel>`, `m._<state>.is.<rel>`) are lowered
+ *     to *raw selector* keys (`.bearbones-marker-<suffix><modifier> &` etc.),
+ *     which Panda's parser recognizes natively as parent-/self-/combinator-
+ *     nesting selectors — no condition registration needed.
  *
  *   - `codegen:prepare` — patches Panda's emitted `styled-system/css/css.d.ts`
  *     in memory before it's written to disk, widening the `css()` signature
@@ -79,24 +76,6 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
       // the actual tokens available in the project — no manual scale arrays.
       populateUtilityMapFromTokens(config.theme?.tokens);
-
-      // Pre-scan every included file for `marker()` declarations so the
-      // resulting condition set is present in the config before Panda's
-      // extractor runs.
-      const cwd = config.cwd ?? process.cwd();
-      const include = (config.include as string[] | undefined) ?? [];
-      const exclude = (config.exclude as string[] | undefined) ?? [];
-      if (include.length > 0) {
-        prescanMarkers({ cwd, include, exclude });
-      }
-      const conditions = buildMarkerConditions();
-      if (Object.keys(conditions).length === 0) return;
-      // Panda's resolved config already flattened `extend` blocks before this
-      // hook fires, so merging into `extend` again wraps the conditions in a
-      // sub-object that the resolver mistakes for a nested condition group
-      // (and then crashes calling `.startsWith` on the object). Merge into
-      // the top-level conditions map instead.
-      config.conditions = { ...config.conditions, ...conditions };
     },
     "parser:before": ({
       filePath,
@@ -133,35 +112,22 @@ export default bearbonesHooks;
  * runtime helper.
  */
 export interface BearbonesVitePluginOptions {
-  /**
-   * Glob patterns mirrored from your Panda config's `include`. Used by the
-   * plugin's pre-scan to discover `marker()` declarations across the project
-   * before the first module is transformed. Defaults to a sensible mirror
-   * of `./src/**\/*.{ts,tsx}` if not provided.
-   */
+  // Glob options retained for API compatibility; no longer used now that the
+  // lowering transform is fully self-contained per file (no global prescan).
   include?: readonly string[];
   exclude?: readonly string[];
 }
 
-export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
+export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): {
   name: string;
   enforce: "pre";
-  configResolved: (config: { root: string }) => void;
   transform: (code: string, id: string) => { code: string; map: null } | null;
 } {
-  let prescanned = false;
   return {
     name: "bearbones",
     // Run before other plugins so the lowered source is what react/jsx and
     // panda's own Vite plugin see.
     enforce: "pre",
-    configResolved(config: { root: string }) {
-      if (prescanned) return;
-      prescanned = true;
-      const include = options.include ?? ["./src/**/*.{ts,tsx}"];
-      const exclude = options.exclude ?? [];
-      prescanMarkers({ cwd: config.root, include, exclude });
-    },
     transform(code: string, id: string) {
       // Vite passes the file's full URL/path; ignore non-source-file ids.
       if (!/\.(?:tsx?|jsx?|mts|cts|mtsx?|ctsx?)$/.test(id)) return null;

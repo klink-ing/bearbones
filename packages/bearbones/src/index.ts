@@ -110,20 +110,24 @@ export type BearbonesMarkerRuntime<Id extends string = string> =
 
 /**
  * The relational builder returned from a marker call (`m(':sel')`) or an
- * underscore shortcut (`m._hover`). `.is.<relation>` resolves to a Panda
- * condition key that targets the styled element when an `ancestor`,
- * `descendant`, or `sibling` of the marker anchor matches the modifier.
+ * underscore shortcut (`m._hover`). `.is.<relation>` resolves to a *raw CSS
+ * selector string* anchored at the marker's `bearbones-marker-<suffix>`
+ * class. Panda's `parseCondition` recognizes the result as parent-/self-/
+ * combinator-nesting and emits CSS for it without any condition having to
+ * be pre-registered.
  *
- * For unregistered marker ids, the literal condition keys aren't known yet,
- * so we widen with `${string}` template literals. Once the codegen patch has
- * emitted `BearbonesMarkerRegistry[Id]` (after the prescan), consumers see
- * the precise literals.
+ * Each variant matches Panda's `AnySelector` template-literal types
+ * (`${string}&` | `&${string}`), so the result is accepted as a computed
+ * key in `BearbonesNestedObject<P>`'s `[K in AnySelector]` branch.
  */
 export interface DefaultBearbonesMarkerBuilder<Id extends string> {
   readonly is: {
-    readonly ancestor: `_marker_${Id}_${string}_ancestor_${string}`;
-    readonly descendant: `_marker_${Id}_${string}_descendant_${string}`;
-    readonly sibling: `_marker_${Id}_${string}_sibling_${string}`;
+    readonly ancestor: `.bearbones-marker-${Id}_${string} &`;
+    readonly descendant: `&:has(.bearbones-marker-${Id}_${string})`;
+    // Sibling is comma-joined and ordered to start with `&` so the string
+    // matches Panda's `AnySelector` (`&${string}`). Order of selectors in a
+    // CSS comma-list is irrelevant to the emitted rule.
+    readonly sibling: `& ~ .bearbones-marker-${Id}_${string}, .bearbones-marker-${Id}_${string} ~ &`;
   };
 }
 

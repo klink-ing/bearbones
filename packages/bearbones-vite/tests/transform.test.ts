@@ -89,7 +89,9 @@ export const cardMarker = marker("card");
     });
     expect(result.content).toBeDefined();
     expect(result.content).toContain('anchor: "bearbones-marker-card_');
-    expect(result.content).toMatch(/_hover: \{ is: \{ ancestor: "_marker_card_/);
+    expect(result.content).toMatch(
+      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+    );
   });
 
   it("registers markers in the global registry", () => {
@@ -139,9 +141,9 @@ export const x = css({ [cardMarker._hover.is.ancestor]: "bg-blue-500" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
-    // The computed key should resolve to the registered relational condition name.
+    // The computed key should resolve to the composed raw selector.
     expect(result.content).toMatch(
-      /"_marker_card_[0-9a-f]{8}_ancestor_[0-9a-f]{8}":\{"bg":"blue\.500"\}/,
+      /"\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &":\{"bg":"blue\.500"\}/,
     );
   });
 
@@ -180,17 +182,20 @@ export const cardMarker = marker("card");
     expect(result.content).toContain("__bearbones_relations");
     // Synthesized record uses Object.assign to wrap the call form + the
     // typed `_<state>` builder properties. Function half delegates to the
-    // helper with the marker suffix.
-    expect(result.content).toContain("Object.assign((m) => __bearbones_relations(m, ");
-    // Underscore builder forms are emitted with literal-string is.<rel> keys.
+    // helper with the marker's anchor class.
     expect(result.content).toMatch(
-      /_hover: \{ is: \{ ancestor: "_marker_card_[0-9a-f]{8}_ancestor_[0-9a-f]{8}"/,
+      /Object\.assign\(\(m\) => __bearbones_relations\(m, "bearbones-marker-card_/,
     );
-    // The legacy `<binding>.<state>` shortcut form has been removed.
+    // Underscore builder forms are emitted with literal raw-selector strings.
+    expect(result.content).toMatch(
+      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+    );
+    // No legacy condition-name string lurking on the record.
     expect(result.content).not.toMatch(/hover: "_markerHover_card_/);
+    expect(result.content).not.toMatch(/_marker_card_[0-9a-f]{8}_ancestor_/);
   });
 
-  it("lowers marker(LITERAL).is.<relation> as a computed key", () => {
+  it("lowers marker(LITERAL).is.ancestor to a raw selector key", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
@@ -202,11 +207,11 @@ export const x = css({ [m(":has(.error)").is.ancestor]: "p-4" });
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"_marker_container_[0-9a-f]{8}_ancestor_[0-9a-f]{8}":\{"p":"4"\}/,
+      /"\.bearbones-marker-container_[0-9a-f]{8}:has\(\.error\) &":\{"p":"4"\}/,
     );
   });
 
-  it("lowers marker._<state>.is.<relation> as a computed key", () => {
+  it("lowers marker._<state>.is.descendant to a `&:has(...)` raw selector key", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
@@ -218,30 +223,41 @@ export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"_marker_panel_[0-9a-f]{8}_descendant_[0-9a-f]{8}":\{"p":"4"\}/,
+      /"&:has\(\.bearbones-marker-panel_[0-9a-f]{8}:focus-visible\)":\{"p":"4"\}/,
     );
   });
 
-  it("registers (modifier, relation) pairs in the marker registry", () => {
+  it("lowers .is.sibling to the comma-joined raw selector form", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("group");
+export const x = css({ [m(":focus-within").is.sibling]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"& ~ \.bearbones-marker-group_[0-9a-f]{8}:focus-within, \.bearbones-marker-group_[0-9a-f]{8}:focus-within ~ &":\{"p":"4"\}/,
+    );
+  });
+
+  it("registers each marker referenced in a chain so listMarkers includes it", () => {
     transform({
       filePath: "/virtual/file.tsx",
       source: `
 import { css } from "../styled-system/css";
 import { marker } from "bearbones";
-const m = marker("widget");
+const widgetMarker = marker("widget");
 export const x = css({
-  [m(":has(.error)").is.ancestor]: "p-4",
-  [m("[data-state=open]").is.sibling]: "p-8",
-  [m._hover.is.descendant]: "p-4",
+  [widgetMarker(":has(.error)").is.ancestor]: "p-4",
 });
       `.trim(),
     });
     const widget = listMarkers().find((mk) => mk.id === "widget");
     expect(widget).toBeDefined();
-    const modifiers = Array.from(widget!.relations.values()).map((r) => r.modifier);
-    expect(modifiers).toEqual(
-      expect.arrayContaining([":has(.error)", "[data-state=open]", ":is(:hover, [data-hover])"]),
-    );
+    expect(widget!.anchorClass).toMatch(/^bearbones-marker-widget_[0-9a-f]{8}$/);
   });
 
   it("leaves the chain untouched when modifier is dynamic", () => {

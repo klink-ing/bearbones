@@ -7,9 +7,8 @@ import {
   MARKER_RELATIONS,
   MARKER_STATES,
   STATE_PSEUDO,
-  buildRelationConditionName,
+  buildRelationSelector,
   registerMarker,
-  registerMarkerCondition,
   type MarkerRelation,
   type MarkerState,
   type RegisteredMarker,
@@ -202,13 +201,13 @@ function resolveKey(prop: any, markers: MarkerCallContext): string | null {
 
 /**
  * Match `<binding>(LITERAL).is.<relation>` and `<binding>._<state>.is.<relation>`
- * computed keys. Returns the underscore-prefixed Panda condition name (i.e.,
- * what consumers write inside `[...]`), or `null` if the key isn't one of
- * the recognized relational chain shapes.
+ * computed keys. Returns the *raw selector string* Panda will treat as a
+ * parent-/self-/combinator-nesting selector, or `null` if the key isn't one
+ * of the recognized relational chain shapes.
  *
- * Side effect: registers the (modifier, relation) pair against the marker so
- * `buildMarkerConditions()` emits a Panda condition at config:resolved time.
- * Idempotent — a second call with the same triple is a no-op.
+ * No side effects. The composed selector is the identity of the rule —
+ * Panda's parser handles the rest at extraction time without any condition
+ * needing to be pre-registered.
  */
 function resolveRelationalKey(node: any, markers: MarkerCallContext): string | null {
   if (node?.type !== "MemberExpression" || node.computed) return null;
@@ -245,13 +244,7 @@ function resolveRelationalKey(node: any, markers: MarkerCallContext): string | n
   const marker = markers.byBinding(bindingName);
   if (!marker) return null;
 
-  const { conditionName } = registerMarkerCondition(
-    marker.id,
-    marker.modulePath,
-    modifier,
-    relation,
-  );
-  return `_${conditionName}`;
+  return buildRelationSelector(marker.anchorClass, modifier, relation);
 }
 
 function isValidState(name: string): name is MarkerState {
@@ -509,42 +502,40 @@ function processMarkerDeclarations(
 }
 
 /**
- * Inline runtime helper. Builds an `{ is: { ancestor, descendant, sibling } }`
- * object for a given `(modifier, suffix)` pair. The FNV-1a 32-bit hash MUST
- * match `modifierHash` in `marker-registry.ts` byte-for-byte: build-side
- * registers conditions named after the build-side hash, and the runtime
- * computes the same key from the same selector at call sites the transform
- * can't statically lower (variable bindings, dynamic selectors).
+ * Inline runtime helper. Composes the three raw-selector strings for a
+ * `(modifier, anchorClass)` pair so variable-bound chains (e.g.
+ * `const k = m(':sel').is.ancestor`) work at runtime. The composition is
+ * byte-for-byte identical to `buildRelationSelector` in `marker-registry.ts`
+ * — Panda accepts the resulting strings as parent-/self-/combinator-nesting
+ * selectors directly.
  *
  * Emitted once per file that declares any marker. The synthesized marker
  * record closes over this constant via a normal lexical reference.
  */
 const RELATIONS_HELPER_NAME = "__bearbones_relations";
-const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, s) => {
-  let _h = 0x811c9dc5 | 0;
-  for (let i = 0; i < m.length; i++) _h = Math.imul(_h ^ m.charCodeAt(i), 0x01000193) | 0;
-  const x = (_h >>> 0).toString(16).padStart(8, "0");
-  return { is: { ancestor: \`_marker_\${s}_ancestor_\${x}\`, descendant: \`_marker_\${s}_descendant_\${x}\`, sibling: \`_marker_\${s}_sibling_\${x}\` } };
+const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, a) => {
+  const x = "." + a + m;
+  return { is: { ancestor: x + " &", descendant: "&:has(" + x + ")", sibling: "& ~ " + x + ", " + x + " ~ &" } };
 };`;
 
 function renderMarkerRecord(marker: RegisteredMarker): string {
   const fields: string[] = [
     `anchor: ${JSON.stringify(marker.anchorClass)}`,
-    // Build the underscore builder forms eagerly with literal strings. The
-    // inlined hash function below rebuilds the same literals at runtime via
-    // the call form, so both paths agree.
+    // Underscore builder forms baked in as literal raw selectors. The inlined
+    // helper below produces the same strings for the call form, so both paths
+    // agree byte-for-byte.
     ...MARKER_STATES.map((state) => {
       const modifier = STATE_PSEUDO[state];
-      const ancestor = buildRelationConditionName(marker.suffix, "ancestor", modifier);
-      const descendant = buildRelationConditionName(marker.suffix, "descendant", modifier);
-      const sibling = buildRelationConditionName(marker.suffix, "sibling", modifier);
-      return `_${state}: { is: { ancestor: "_${ancestor}", descendant: "_${descendant}", sibling: "_${sibling}" } }`;
+      const ancestor = buildRelationSelector(marker.anchorClass, modifier, "ancestor");
+      const descendant = buildRelationSelector(marker.anchorClass, modifier, "descendant");
+      const sibling = buildRelationSelector(marker.anchorClass, modifier, "sibling");
+      return `_${state}: { is: { ancestor: ${JSON.stringify(ancestor)}, descendant: ${JSON.stringify(descendant)}, sibling: ${JSON.stringify(sibling)} } }`;
     }),
   ];
   // Object.assign(fn, { ...props }) — the function half handles the
   // `(modifier).is.<relation>` call form, the assigned properties cover the
   // anchor class and the `_<state>.is.<relation>` underscore builders.
-  return `Object.assign((m) => ${RELATIONS_HELPER_NAME}(m, ${JSON.stringify(marker.suffix)}), { ${fields.join(", ")} })`;
+  return `Object.assign((m) => ${RELATIONS_HELPER_NAME}(m, ${JSON.stringify(marker.anchorClass)}), { ${fields.join(", ")} })`;
 }
 
 /**

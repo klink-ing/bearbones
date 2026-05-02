@@ -15,7 +15,6 @@ const SAMPLE_MARKERS: readonly RegisteredMarker[] = [
     hash: "a27adb16",
     suffix: "card_a27adb16",
     anchorClass: "bearbones-marker-card_a27adb16",
-    relations: new Map(),
   },
   {
     id: "row",
@@ -23,7 +22,6 @@ const SAMPLE_MARKERS: readonly RegisteredMarker[] = [
     hash: "5ec0c285",
     suffix: "row_5ec0c285",
     anchorClass: "bearbones-marker-row_5ec0c285",
-    relations: new Map(),
   },
 ];
 
@@ -122,21 +120,25 @@ describe("patchCssArtifact — marker registry augmentation", () => {
     expect(patched).toContain("interface BearbonesMarkerRegistry");
   });
 
-  it("emits one entry per registered marker with anchor + underscore builders", () => {
+  it("emits one entry per registered marker with anchor + raw-selector underscore builders", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
-    // Card entry: id key, anchor class, and one underscore builder per state.
+    // Card entry: id key, anchor class, raw-selector typed builder per state.
     expect(patched).toContain('"card": {');
     expect(patched).toContain('readonly anchor: "bearbones-marker-card_a27adb16";');
-    expect(patched).toMatch(
-      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_/,
+    expect(patched).toContain(
+      'readonly _hover: { readonly is: { readonly ancestor: ".bearbones-marker-card_a27adb16:is(:hover, [data-hover]) &"',
+    );
+    expect(patched).toContain(
+      'readonly _focusVisible: { readonly is: { readonly ancestor: ".bearbones-marker-card_a27adb16:focus-visible &"',
     );
     // Row entry exists too.
     expect(patched).toContain('"row": {');
-    expect(patched).toMatch(
-      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_row_5ec0c285_ancestor_/,
+    expect(patched).toContain(
+      'readonly _hover: { readonly is: { readonly ancestor: ".bearbones-marker-row_5ec0c285:is(:hover, [data-hover]) &"',
     );
-    // The legacy `readonly hover: "_markerHover_..."` shortcut form is gone.
+    // No legacy condition-name strings or shortcut properties.
     expect(patched).not.toMatch(/readonly hover: "_markerHover_/);
+    expect(patched).not.toMatch(/readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_/);
   });
 
   it("omits the augmentation block entirely when no markers are registered", () => {
@@ -147,52 +149,34 @@ describe("patchCssArtifact — marker registry augmentation", () => {
 });
 
 describe("patchCssArtifact — relational marker chains", () => {
-  it("emits underscore builder properties for every marker", () => {
+  it("emits a single wide-string call overload per marker entry", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
-    // Each underscore builder lists ancestor / descendant / sibling literals.
-    expect(patched).toMatch(
-      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_[0-9a-f]{8}"/,
+    // The call signature returns template-literal-typed raw selectors anchored
+    // at the marker's class. No per-modifier overloads, just one wide string.
+    expect(patched).toContain(
+      "(selector: string): { readonly is: { readonly ancestor: `.bearbones-marker-card_a27adb16${string} &`",
     );
-    expect(patched).toMatch(
-      /readonly _focusVisible: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_[0-9a-f]{8}"/,
+    expect(patched).toContain("`&:has(.bearbones-marker-card_a27adb16${string})`");
+    expect(patched).toContain(
+      "`& ~ .bearbones-marker-card_a27adb16${string}, .bearbones-marker-card_a27adb16${string} ~ &`",
     );
   });
 
-  it("emits one call overload per registered modifier", () => {
-    const cardWithRelations: RegisteredMarker = {
-      ...SAMPLE_MARKERS[0]!,
-      relations: new Map([
-        [
-          "marker_card_a27adb16_ancestor_aaaaaaaa",
-          {
-            modifier: ":has(.error)",
-            relation: "ancestor" as const,
-            selector: ".bearbones-marker-card_a27adb16:has(.error) &",
-          },
-        ],
-      ]),
-    };
-    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, [cardWithRelations]);
-    expect(patched).toContain('(selector: ":has(.error)"): { readonly is: { readonly ancestor:');
-  });
-
-  it("always emits a wide-string fallback overload", () => {
+  it("does not emit a Conditions augmentation block", () => {
+    // The whole condition-registration pipeline is gone — chains lower to raw
+    // selectors that Panda parses natively, no `keyof Conditions` widening
+    // needed.
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
-    expect(patched).toContain("(selector: string): { readonly is: { readonly ancestor:");
-  });
-
-  it("appends a Conditions augmentation with template-literal index signatures", () => {
-    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
-    expect(patched).toContain("declare module '../types/conditions'");
-    expect(patched).toContain("interface Conditions");
-    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_ancestor_\$\{string\}`\]: string;/);
-    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_descendant_\$\{string\}`\]: string;/);
-    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_sibling_\$\{string\}`\]: string;/);
-  });
-
-  it("omits the Conditions augmentation when no markers are registered", () => {
-    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, []);
     expect(patched).not.toContain("declare module '../types/conditions'");
+    expect(patched).not.toMatch(/\[k: `_marker_/);
+  });
+
+  it("does not emit per-modifier call overloads", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    // Each marker entry has exactly one `(selector:` call signature (the wide
+    // fallback). No closed-set overloads per registered modifier remain.
+    const callSignatures = patched.match(/\(selector:[^)]*\):/g) ?? [];
+    expect(callSignatures.length).toBe(SAMPLE_MARKERS.length);
   });
 });
 

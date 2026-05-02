@@ -1,32 +1,37 @@
 import { beforeEach, describe, it, expect } from "vitest";
 import {
   __resetRegistry,
-  buildMarkerConditions,
-  buildRelationConditionName,
   buildRelationSelector,
-  modifierHash,
+  listMarkers,
   registerMarker,
-  registerMarkerCondition,
 } from "../src/marker-registry.ts";
 
 beforeEach(() => {
   __resetRegistry();
 });
 
-describe("modifierHash", () => {
-  it("is deterministic for the same input", () => {
-    expect(modifierHash(":hover")).toBe(modifierHash(":hover"));
-    expect(modifierHash(":has(.error)")).toBe(modifierHash(":has(.error)"));
+describe("registerMarker", () => {
+  it("returns a stable suffix and anchor class for the same (id, modulePath) pair", () => {
+    const a = registerMarker("card", "/virtual/markers.ts");
+    const b = registerMarker("card", "/virtual/markers.ts");
+    expect(a).toBe(b);
+    expect(a.suffix).toMatch(/^card_[0-9a-f]{8}$/);
+    expect(a.anchorClass).toBe(`bearbones-marker-${a.suffix}`);
   });
 
-  it("produces different hashes for different inputs", () => {
-    expect(modifierHash(":hover")).not.toBe(modifierHash(":focus"));
-    expect(modifierHash(":has(.foo)")).not.toBe(modifierHash(":has(.bar)"));
+  it("produces distinct suffixes for the same id in different module paths", () => {
+    const a = registerMarker("card", "/virtual/markers-a.ts");
+    const b = registerMarker("card", "/virtual/markers-b.ts");
+    expect(a.suffix).not.toBe(b.suffix);
   });
 
-  it("produces 8 hex chars", () => {
-    expect(modifierHash(":hover")).toMatch(/^[0-9a-f]{8}$/);
-    expect(modifierHash("")).toMatch(/^[0-9a-f]{8}$/);
+  it("listMarkers returns every registered marker", () => {
+    registerMarker("card", "/m.ts");
+    registerMarker("row", "/m.ts");
+    const ids = listMarkers()
+      .map((m) => m.id)
+      .sort();
+    expect(ids).toEqual(["card", "row"]);
   });
 });
 
@@ -45,64 +50,15 @@ describe("buildRelationSelector", () => {
 
   it("sibling → comma-joined `~ &` selectors on both sides", () => {
     expect(buildRelationSelector(anchor, ":focus-within", "sibling")).toBe(
-      `.${anchor}:focus-within ~ &, & ~ .${anchor}:focus-within`,
+      `& ~ .${anchor}:focus-within, .${anchor}:focus-within ~ &`,
     );
+  });
+
+  it("ends in `&` for ancestor / sibling, starts with `&` for descendant — Panda's parseCondition shape", () => {
+    expect(buildRelationSelector(anchor, ":hover", "ancestor").endsWith(" &")).toBe(true);
+    expect(buildRelationSelector(anchor, ":hover", "descendant").startsWith("&")).toBe(true);
+    // sibling has both `~ &` and `& ~` — Panda's `combinator-nesting` branch
+    // (`.includes("&")`) handles it.
+    expect(buildRelationSelector(anchor, ":hover", "sibling")).toContain("&");
   });
 });
-
-describe("registerMarkerCondition", () => {
-  it("registers a (modifier, relation) pair on the marker", () => {
-    const m = registerMarker("card", "/virtual/markers.ts");
-    const { conditionName } = registerMarkerCondition(
-      "card",
-      "/virtual/markers.ts",
-      ":has(.error)",
-      "ancestor",
-    );
-    expect(conditionName).toBe(buildRelationConditionName(m.suffix, "ancestor", ":has(.error)"));
-    expect(m.relations.has(conditionName)).toBe(true);
-    expect(m.relations.get(conditionName)?.modifier).toBe(":has(.error)");
-  });
-
-  it("is idempotent: same inputs collapse to the same condition entry", () => {
-    const a = registerMarkerCondition("x", "/m.ts", ":hover", "ancestor");
-    const b = registerMarkerCondition("x", "/m.ts", ":hover", "ancestor");
-    expect(a.conditionName).toBe(b.conditionName);
-  });
-
-  it("includes registered relations in buildMarkerConditions output", () => {
-    registerMarkerCondition("x", "/m.ts", ":has(.error)", "ancestor");
-    registerMarkerCondition("x", "/m.ts", ":focus-within", "sibling");
-    const conditions = buildMarkerConditions();
-    const ancestorKey = buildRelationConditionName(
-      "x_" + modifierKnownHash(),
-      "ancestor",
-      ":has(.error)",
-    );
-    // We don't know the marker suffix's hash without recomputing it, so just
-    // assert the shape: at least one ancestor key and one sibling key exist.
-    const ancestorKeys = Object.keys(conditions).filter((k) => /_ancestor_/.test(k));
-    const siblingKeys = Object.keys(conditions).filter((k) => /_sibling_/.test(k));
-    expect(ancestorKeys.length).toBeGreaterThan(0);
-    expect(siblingKeys.length).toBeGreaterThan(0);
-    // Selectors include the modifier verbatim.
-    const ancestorSelector = conditions[ancestorKeys[0]!];
-    expect(ancestorSelector).toMatch(/:has\(\.error\) &$/);
-    const siblingSelector = conditions[siblingKeys[0]!];
-    expect(siblingSelector).toContain(":focus-within ~ &");
-    void ancestorKey; // suppress unused
-  });
-
-  it("does not emit legacy `markerHover_<suffix>` shortcut conditions anymore", () => {
-    registerMarkerCondition("x", "/m.ts", ":has(.error)", "ancestor");
-    const conditions = buildMarkerConditions();
-    const legacy = Object.keys(conditions).filter((k) => /^marker(Hover|Focus|Active)_/.test(k));
-    expect(legacy).toEqual([]);
-  });
-});
-
-function modifierKnownHash(): string {
-  // Placeholder used by one of the assertions above where we don't need the
-  // exact suffix hash. Kept as a function so the test reads naturally.
-  return "00000000";
-}
