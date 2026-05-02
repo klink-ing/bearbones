@@ -4,13 +4,17 @@ import { preset as pandaPreset } from "@pandacss/preset-base";
  * Module-scoped stash of the host project's resolved Panda condition values.
  *
  * Populated from `config.conditions` in the `config:resolved` hook (see
- * `index.ts`). Until that hook fires we fall back to the conditions shipped by
- * `@pandacss/preset-base` so unit tests that bypass the hook pipeline still
- * see the standard `_hover`/`_focus`/etc. vocabulary.
+ * `index.ts`). Until that hook fires we fall back to the conditions shipped
+ * by `@pandacss/preset-base` so unit tests that bypass the hook pipeline
+ * still see the standard `hover`/`focus`/etc. vocabulary.
  *
- * Values are stored under keys with any leading `_` stripped, so users can
- * write `m._hover` regardless of whether the source preset declared the
- * condition as `hover` (preset-base style) or `_hover` (typical user style).
+ * Keys are stored exactly as Panda emits them. Panda's resolved
+ * `config.conditions` always uses the unprefixed form (`hover`, `dark`,
+ * `myCustomCond`) — the leading-`_` you write in `panda.config.ts` is
+ * stripped during resolution. The user-facing API exposes them through
+ * `marker._<name>`, and the transform slices the leading `_` before
+ * looking up here, so the round-trip stays consistent without any
+ * normalization step on this side.
  *
  * Only string condition values are kept — at-rule conditions and structured
  * tokens are out of scope for relational marker chains, which require an `&`
@@ -19,22 +23,13 @@ import { preset as pandaPreset } from "@pandacss/preset-base";
 
 let CONDITIONS: Record<string, string> = loadFallbackConditions();
 
-/**
- * Strip a single leading `_` from a condition key so user-written `_dark`,
- * preset-base `hover`, and codegen-emitted `_focusVisible` all hash to the
- * same lookup name.
- */
-export function normalizeConditionName(key: string): string {
-  return key.startsWith("_") ? key.slice(1) : key;
-}
-
 function loadFallbackConditions(): Record<string, string> {
   const out: Record<string, string> = {};
   const conditions = (pandaPreset as { conditions?: Record<string, unknown> }).conditions;
   if (!conditions || typeof conditions !== "object") return out;
   for (const [key, value] of Object.entries(conditions)) {
     if (typeof value !== "string") continue;
-    out[normalizeConditionName(key)] = value;
+    out[key] = value;
   }
   return out;
 }
@@ -47,17 +42,18 @@ export function setConditions(conditions: Record<string, unknown>): void {
   const next: Record<string, string> = {};
   for (const [key, value] of Object.entries(conditions)) {
     if (typeof value !== "string") continue;
-    next[normalizeConditionName(key)] = value;
+    next[key] = value;
   }
   CONDITIONS = next;
 }
 
 /**
- * Look up a condition value by normalized name (no leading `_`). Returns
- * `undefined` if the condition isn't registered.
+ * Look up a condition value by name (e.g. `hover`, `dark`). The transform
+ * passes in the stripped form of `m._<name>`. Returns `undefined` if the
+ * condition isn't registered.
  */
 export function getCondition(name: string): string | undefined {
-  return CONDITIONS[normalizeConditionName(name)];
+  return CONDITIONS[name];
 }
 
 /**
