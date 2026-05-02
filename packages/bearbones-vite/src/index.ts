@@ -139,7 +139,6 @@ export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): 
 }
 
 // Re-export internal pieces that the test suite consumes.
-export { listMarkers } from "./marker-registry.ts";
 export { listUtilities, populateUtilityMapFromTokens } from "./utility-map.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
 export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";

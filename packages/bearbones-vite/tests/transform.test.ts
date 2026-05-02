@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import { transform } from "../src/transform.ts";
-import { __resetRegistry, listMarkers } from "../src/marker-registry.ts";
 import { populateUtilityMapFromTokens } from "../src/utility-map.ts";
 
 // Minimal token tree exercising the same shapes Panda emits. Just enough to
@@ -29,7 +28,6 @@ const MOCK_TOKENS = {
 };
 
 beforeEach(() => {
-  __resetRegistry();
   populateUtilityMapFromTokens(MOCK_TOKENS);
 });
 
@@ -94,8 +92,8 @@ export const cardMarker = marker("card");
     );
   });
 
-  it("registers markers in the global registry", () => {
-    transform({
+  it("rewrites both markers in a multi-marker file with deterministic suffixes", () => {
+    const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
 import { marker } from "bearbones";
@@ -103,8 +101,11 @@ export const cardMarker = marker("card");
 export const rowMarker = marker("row");
       `.trim(),
     });
-    const ids = listMarkers().map((m) => m.id);
-    expect(ids).toEqual(expect.arrayContaining(["card", "row"]));
+    expect(result.content).toBeDefined();
+    // Each marker call site replaced with a synthesized record carrying its
+    // own anchor class, derived purely from `(id, modulePath)`.
+    expect(result.content).toMatch(/anchor: "bearbones-marker-card_[0-9a-f]{8}"/);
+    expect(result.content).toMatch(/anchor: "bearbones-marker-row_[0-9a-f]{8}"/);
   });
 
   it("rejects dynamic marker ids at build time", () => {
@@ -243,8 +244,8 @@ export const x = css({ [m(":focus-within").is.sibling]: "p-4" });
     );
   });
 
-  it("registers each marker referenced in a chain so listMarkers includes it", () => {
-    transform({
+  it("derives the same anchor suffix for a marker used in declaration + chain in one file", () => {
+    const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
 import { css } from "../styled-system/css";
@@ -255,9 +256,15 @@ export const x = css({
 });
       `.trim(),
     });
-    const widget = listMarkers().find((mk) => mk.id === "widget");
-    expect(widget).toBeDefined();
-    expect(widget!.anchorClass).toMatch(/^bearbones-marker-widget_[0-9a-f]{8}$/);
+    expect(result.content).toBeDefined();
+    // Pull the suffix out of the synthesized record's anchor field and assert
+    // the chain's lowered selector uses the same one.
+    const anchorMatch = result.content!.match(/anchor: "bearbones-marker-widget_([0-9a-f]{8})"/);
+    expect(anchorMatch).not.toBeNull();
+    const suffix = anchorMatch![1];
+    expect(result.content).toContain(
+      `".bearbones-marker-widget_${suffix}:has(.error) &":{"p":"4"}`,
+    );
   });
 
   it("leaves the chain untouched when modifier is dynamic", () => {

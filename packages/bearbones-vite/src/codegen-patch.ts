@@ -30,14 +30,6 @@
  */
 
 import { listUtilities } from "./utility-map.ts";
-import {
-  buildRelationSelector,
-  listMarkers,
-  MARKER_STATES,
-  STATE_PSEUDO,
-  type MarkerState,
-  type RegisteredMarker,
-} from "./marker-registry.ts";
 
 /**
  * The anchor we replace in Panda's emitted `css.d.ts`. Captured verbatim from
@@ -54,11 +46,7 @@ const STYLES_ANCHOR = "type Styles = SystemStyleObject | undefined | null | fals
  * Throws if the source doesn't contain the expected anchor. The thrown error
  * names the missing anchor explicitly so the failure is self-diagnosing.
  */
-export function patchCssArtifact(
-  source: string,
-  utilityNames: readonly string[],
-  markers: readonly RegisteredMarker[] = [],
-): string {
+export function patchCssArtifact(source: string, utilityNames: readonly string[]): string {
   if (!source.includes(STYLES_ANCHOR)) {
     throw new Error(
       `@bearbones/vite codegen-patch: expected anchor not found in css.d.ts.\n` +
@@ -92,29 +80,24 @@ export function patchCssArtifact(
     );
   }
 
-  const markerRegistryAugmentation = renderMarkerRegistryAugmentation(markers);
-
-  // The marker-registry augmentation is appended at the end of the file. It's
-  // a `declare module 'bearbones'` block listing every marker the project
-  // contains. Each entry pairs the anchor class with the typed `_<state>`
-  // builders, plus a wide-string call signature. The builder return types are
-  // raw selectors anchored at `bearbones-marker-<suffix>`, which Panda's
-  // `parseCondition` accepts directly — no `keyof Conditions` augmentation
-  // needed, no per-modifier overloads, no condition-name hashing.
-  return (
-    source
-      .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
-      .replace(STYLES_ANCHOR, patchedStyles) + markerRegistryAugmentation
-  );
+  // No marker-registry augmentation. The chain compiles to raw selectors
+  // anchored at `bearbones-marker-<suffix>`, and the wide template-literal
+  // types in `DefaultBearbonesMarker<Id>` (in the bearbones package) match
+  // Panda's `AnySelector` — so consumers' `[m._hover.is.ancestor]` keys
+  // typecheck via `BearbonesNestedObject<P>`'s existing `[K in AnySelector]`
+  // branch with no per-marker codegen here.
+  return source
+    .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
+    .replace(STYLES_ANCHOR, patchedStyles);
 }
 
 /**
- * Convenience wrapper that patches against the live utility + marker lists.
- * Used by the `codegen:prepare` hook in production; tests pass fixed inputs
- * to keep snapshots stable.
+ * Convenience wrapper that patches against the live utility list. Used by
+ * the `codegen:prepare` hook in production; tests pass fixed inputs to keep
+ * snapshots stable.
  */
 export function patchCssArtifactLive(source: string): string {
-  return patchCssArtifact(source, listUtilities(), listMarkers());
+  return patchCssArtifact(source, listUtilities());
 }
 
 function renderUtilityUnion(names: readonly string[]): string {
@@ -144,14 +127,10 @@ function renderInjectedTypes(utilityUnion: string): string {
   // Distributing `Omit` over `BearbonesUtilityName | ObjectType` widens the
   // string-literal union to a structural string type and the closed-set
   // checking would silently break.
-  // No `BearbonesMarkerConditionKey` mapped-type slot here. Marker condition
-  // keys ARE keys of Panda's `Conditions` interface (registered by the
-  // prescan), so `[K in keyof Conditions]` already covers them. Adding a
-  // separate template-literal mapped slot used to introduce a `string` index
-  // signature on consumer object literals that conflicted with Panda's
-  // `CssVarProperties[ '--${string}' ]` index — see the marker-registry
-  // augmentation appended below for how we narrow `cardMarker._hover.is.ancestor`
-  // to a specific literal that lands inside `keyof Conditions` directly.
+  // No `BearbonesMarkerConditionKey` mapped-type slot. Relational marker keys
+  // are raw CSS selectors — they're accepted as computed keys via Panda's
+  // existing `[K in AnySelector]` index in `BearbonesNestedObject<P>`, so
+  // there's nothing extra to inject here for them.
   return [
     "export type BearbonesUtilityName =",
     utilityUnion,
@@ -172,86 +151,6 @@ function renderInjectedTypes(utilityUnion: string): string {
     "  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, 'base'>;",
     "",
   ].join("\n");
-}
-
-/**
- * Render a `declare module 'bearbones'` block that augments the empty
- * `BearbonesMarkerRegistry` interface in the bearbones package with one
- * entry per declared marker. Each entry pairs the anchor class with the
- * typed `_<state>` builders (raw-selector return types) and a single
- * wide-string call signature.
- *
- * No per-modifier overloads, no `keyof Conditions` augmentation — the chain
- * lowers to raw selectors that Panda accepts directly via
- * `BearbonesNestedObject<P>`'s `[K in AnySelector]` branch.
- */
-function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]): string {
-  if (markers.length === 0) return "";
-  const entries = markers.map(renderMarkerEntry).join("\n");
-
-  return [
-    "",
-    "",
-    "// --- Marker registry: emitted by @bearbones/vite codegen:prepare ---",
-    "// One entry per `marker(...)` declaration the transform has seen. Augments",
-    "// the empty `BearbonesMarkerRegistry` interface in the bearbones package",
-    "// so `marker(id)` returns a shape with literal-typed raw-selector keys.",
-    "declare module 'bearbones' {",
-    "  interface BearbonesMarkerRegistry {",
-    entries,
-    "  }",
-    "}",
-    "",
-  ].join("\n");
-}
-
-/**
- * Render the per-marker entry. Each entry is a function-with-properties
- * intersection: the call signature handles `marker(':sel')` (one wide-string
- * overload returning template-literal-typed raw selectors), and the `&`
- * clause attaches the anchor class and the underscore builder forms.
- *
- * Why a function-with-`&`-properties: TS resolves member access (`marker.anchor`,
- * `marker._focus`) through the intersected object type while keeping the
- * call signature usable. This is the standard trick for a callable object
- * shape and is what TypeScript's own emit uses for hybrid types.
- */
-function renderMarkerEntry(marker: RegisteredMarker): string {
-  const propertyFields: string[] = [
-    `      readonly anchor: ${JSON.stringify(marker.anchorClass)};`,
-    ...MARKER_STATES.map((state) => renderUnderscoreBuilder(state, marker, /*indent*/ 6)),
-  ];
-  const objectShape = `{
-${propertyFields.join("\n")}
-    }`;
-  const callShape = renderCallShape(marker);
-  return `    ${JSON.stringify(marker.id)}: ${callShape} & ${objectShape};`;
-}
-
-function renderUnderscoreBuilder(
-  state: MarkerState,
-  marker: RegisteredMarker,
-  indent: number,
-): string {
-  const pad = " ".repeat(indent);
-  const modifier = STATE_PSEUDO[state];
-  const ancestor = buildRelationSelector(marker.anchorClass, modifier, "ancestor");
-  const descendant = buildRelationSelector(marker.anchorClass, modifier, "descendant");
-  const sibling = buildRelationSelector(marker.anchorClass, modifier, "sibling");
-  return `${pad}readonly _${state}: { readonly is: { readonly ancestor: ${JSON.stringify(ancestor)}; readonly descendant: ${JSON.stringify(descendant)}; readonly sibling: ${JSON.stringify(sibling)} } };`;
-}
-
-function renderCallShape(marker: RegisteredMarker): string {
-  // Single wide-string overload. Returns template-literal-typed raw selectors
-  // anchored at the marker's hashed class. Each variant matches Panda's
-  // `AnySelector` (`${string}&` | `&${string}`), so the result is accepted as
-  // a computed key in `BearbonesNestedObject<P>` without further help.
-  // Sibling is ordered `& ~ <anchor>, <anchor> ~ &` so it starts with `&`
-  // (matching `&${string}`); CSS-wise the order of comma-joined selectors
-  // doesn't matter.
-  return `{
-      (selector: string): { readonly is: { readonly ancestor: \`.${marker.anchorClass}\${string} &\`; readonly descendant: \`&:has(.${marker.anchorClass}\${string})\`; readonly sibling: \`& ~ .${marker.anchorClass}\${string}, .${marker.anchorClass}\${string} ~ &\` } };
-    }`;
 }
 
 /**

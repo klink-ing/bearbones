@@ -1,25 +1,24 @@
 import { createHash } from "node:crypto";
 
 /**
- * The global marker registry tracks every `marker(<id>)` declaration discovered
- * during the parser:before pass across the codebase.
+ * Pure helpers used by the lowering transform to compose marker anchors and
+ * relational raw selectors. There is no module-scoped state — `marker(id)`
+ * declarations don't need to be "registered" anywhere; the transform derives
+ * everything it needs (suffix, anchor class, raw selector) deterministically
+ * from `(id, modulePath)` on demand.
  *
- * A marker's identity is the (id, modulePath) pair: distinct files declaring
- * `marker('card')` get distinct hashed anchor classes, so two unrelated
- * components don't accidentally share a marker.
- *
- * Why a registry at all when we no longer register Panda conditions: the
- * codegen-patch's `BearbonesMarkerRegistry` augmentation lists every marker
- * declaration the project contains, and the cross-file lookup in
- * `transform.ts` relies on a stable `(id, modulePath) → suffix` map.
+ * That deterministic derivation is the whole reason this module exists.
+ * Anything that needs a stable build-time identity for `(id, modulePath)`
+ * — the synthesized record's anchor class, cross-file lookups in the
+ * transform — calls into here and gets the same answer every time.
  */
 
-export interface RegisteredMarker {
+export interface MarkerDescriptor {
   /** The literal id passed to `marker(...)`. */
   readonly id: string;
-  /** The module path where the declaration lives. Used for the hash. */
+  /** The module path of the declaring file. */
   readonly modulePath: string;
-  /** Module-scoped hash; combined with id to make the suffix. */
+  /** Module-scoped 8-hex SHA1 hash of `(id, modulePath)`. */
   readonly hash: string;
   /** Suffix applied to the anchor class (`bearbones-marker-<suffix>`). */
   readonly suffix: string;
@@ -27,13 +26,10 @@ export interface RegisteredMarker {
   readonly anchorClass: string;
 }
 
-const MARKERS = new Map<string, RegisteredMarker>();
-
 /**
- * Standard set of pseudo-states each declared marker exposes as a typed
- * `_<state>` builder shortcut on the synthesized record. The shortcut is
- * equivalent to calling the marker with the matching `STATE_PSEUDO[state]`
- * selector — the runtime path collapses both forms to the same raw selector.
+ * Standard set of pseudo-states each marker exposes as a typed `_<state>`
+ * builder shortcut on the synthesized record. The shortcut is equivalent to
+ * calling the marker with the matching `STATE_PSEUDO[state]` selector.
  */
 export const MARKER_STATES = ["hover", "focus", "focusVisible", "active", "disabled"] as const;
 
@@ -41,8 +37,7 @@ export type MarkerState = (typeof MARKER_STATES)[number];
 
 /**
  * Map a state name to the CSS pseudo-class that selects it on the anchor.
- * Mirrors the selectors Panda's preset-base uses for `_hover` etc., so the
- * resulting rules feel consistent with Panda's defaults.
+ * Mirrors the selectors Panda's preset-base uses for `_hover` etc.
  */
 export const STATE_PSEUDO: Record<MarkerState, string> = {
   hover: ":is(:hover, [data-hover])",
@@ -66,29 +61,21 @@ function shortHash(input: string): string {
   return createHash("sha1").update(input).digest("hex").slice(0, 8);
 }
 
-function key(id: string, modulePath: string): string {
-  return `${id}::${modulePath}`;
-}
-
-export function registerMarker(id: string, modulePath: string): RegisteredMarker {
-  const k = key(id, modulePath);
-  const cached = MARKERS.get(k);
-  if (cached) return cached;
-  const hash = shortHash(k);
+/**
+ * Compose a marker descriptor from `(id, modulePath)`. Pure function — no
+ * caching, no global state. Callers that want to amortize the SHA1 hash
+ * across many lookups can wrap this in their own `Map`.
+ */
+export function describeMarker(id: string, modulePath: string): MarkerDescriptor {
+  const hash = shortHash(`${id}::${modulePath}`);
   const suffix = `${id}_${hash}`;
-  const registered: RegisteredMarker = {
+  return {
     id,
     modulePath,
     hash,
     suffix,
     anchorClass: `bearbones-marker-${suffix}`,
   };
-  MARKERS.set(k, registered);
-  return registered;
-}
-
-export function listMarkers(): readonly RegisteredMarker[] {
-  return Array.from(MARKERS.values());
 }
 
 /**
@@ -124,11 +111,4 @@ export function buildRelationSelector(
     case "sibling":
       return `& ~ ${anchor}, ${anchor} ~ &`;
   }
-}
-
-/**
- * Reset the registry. Used between tests; not part of the public surface.
- */
-export function __resetRegistry(): void {
-  MARKERS.clear();
 }

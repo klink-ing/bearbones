@@ -8,10 +8,10 @@ import {
   MARKER_STATES,
   STATE_PSEUDO,
   buildRelationSelector,
-  registerMarker,
+  describeMarker,
+  type MarkerDescriptor,
   type MarkerRelation,
   type MarkerState,
-  type RegisteredMarker,
 } from "./marker-registry.ts";
 
 /**
@@ -326,14 +326,16 @@ function deepAssign(target: StyleFragment, source: StyleFragment): void {
  *
  * Pre-reading the imported file is necessary because Panda calls
  * `parser:before` once per file and doesn't guarantee processing order — a
- * consumer of `cardMarker` may be parsed before its declaring module.
+ * consumer of `cardMarker` may be parsed before its declaring module. The
+ * cache is per-context (per file), not global; nothing here outlives a
+ * single transform pass.
  */
 class MarkerCallContext {
-  private readonly bindings = new Map<string, RegisteredMarker>();
+  private readonly bindings = new Map<string, MarkerDescriptor>();
   /** localName → absolute path of the imported file, for cross-file lookup. */
   private readonly imports = new Map<string, string>();
 
-  bind(localName: string, marker: RegisteredMarker): void {
+  bind(localName: string, marker: MarkerDescriptor): void {
     this.bindings.set(localName, marker);
   }
 
@@ -341,7 +343,7 @@ class MarkerCallContext {
     this.imports.set(localName, absolutePath);
   }
 
-  byBinding(localName: string): RegisteredMarker | undefined {
+  byBinding(localName: string): MarkerDescriptor | undefined {
     const cached = this.bindings.get(localName);
     if (cached) return cached;
     // Look up cross-file imports lazily.
@@ -357,18 +359,18 @@ class MarkerCallContext {
 }
 
 /**
- * Read an imported file, scan it for `marker()` declarations, and register the
- * matching binding name. Returns the registered marker (cached) or undefined.
+ * Read an imported file, scan it for the `marker()` declaration matching
+ * `bindingName`, and return a `MarkerDescriptor` derived from `(id, path)`.
  *
  * This is best-effort and intentionally loose: if the file can't be read, or
  * doesn't contain the expected declaration, we silently return undefined and
  * leave the call site untouched. The downstream Panda extractor will simply
- * skip the unrecognized condition key.
+ * skip the unrecognized key.
  */
 function resolveImportedMarker(
   absolutePath: string,
   bindingName: string,
-): RegisteredMarker | undefined {
+): MarkerDescriptor | undefined {
   let content: string;
   try {
     content = readFileSync(absolutePath, "utf8");
@@ -402,7 +404,7 @@ function resolveImportedMarker(
       if (callee.type !== "Identifier" || !bindings.marker.has(callee.name)) continue;
       const arg = declarator.init.arguments[0];
       if (!arg || arg.type !== "StringLiteral") continue;
-      return registerMarker(arg.value, absolutePath);
+      return describeMarker(arg.value, absolutePath);
     }
   }
   return undefined;
@@ -488,12 +490,12 @@ function processMarkerDeclarations(
         throw new Error(`bearbones: marker() requires a literal string id at ${modulePath}`);
       }
       const id = arg.value;
-      const registered = registerMarker(id, modulePath);
-      ctx.bind(declarator.id.name, registered);
+      const descriptor = describeMarker(id, modulePath);
+      ctx.bind(declarator.id.name, descriptor);
 
       // Rewrite the call to a synthesized record literal so the runtime
       // doesn't need a real `marker()` implementation.
-      const replacement = renderMarkerRecord(registered);
+      const replacement = renderMarkerRecord(descriptor);
       source.overwrite(declarator.init.start, declarator.init.end, replacement);
       needsRelationsHelper = true;
     }
@@ -518,7 +520,7 @@ const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, a) => {
   return { is: { ancestor: x + " &", descendant: "&:has(" + x + ")", sibling: "& ~ " + x + ", " + x + " ~ &" } };
 };`;
 
-function renderMarkerRecord(marker: RegisteredMarker): string {
+function renderMarkerRecord(marker: MarkerDescriptor): string {
   const fields: string[] = [
     `anchor: ${JSON.stringify(marker.anchorClass)}`,
     // Underscore builder forms baked in as literal raw selectors. The inlined
