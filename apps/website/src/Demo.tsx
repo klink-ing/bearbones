@@ -105,19 +105,6 @@ export function Demo() {
         </label>
         <p
           className={cx(
-            css({
-              [cardMarker("& > *").is.descendant]: "text-red-500",
-              // ['&:has(.flag-error)']: "text-red-500",
-              borderWidth: 1,
-            }),
-          )}
-        >
-          Mixing a marker computed-key with a sibling CSS property in one object now type-checks —
-          relation types are concrete literal templates, so TS keeps the computed key as a named
-          property instead of widening to a string index signature.
-        </p>
-        <p
-          className={cx(
             css("text-sm", {
               // Call form: arbitrary CSS-fragment modifier.
               [cardMarker("&:has(*:focus-visible)").is.ancestor]: "text-white",
