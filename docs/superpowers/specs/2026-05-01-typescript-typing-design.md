@@ -230,3 +230,64 @@ Removing the `TypedCss` cast from `Demo.tsx` and getting a clean `tsc` is itself
 - `apps/website/src/Demo.tsx` — remove `TypedCss` cast
 - `apps/website/src/__type-tests__/css-typing.ts` — new
 - `README.md` — update "Repository layout" and "Follow-ups"
+
+## When-style relational modifiers
+
+A second iteration extends the marker primitive with a StyleX-style `when` API: `marker(':sel').is.<relation>` (call form) and `marker._<state>.is.<relation>` (typed shortcut). The user can apply _any_ CSS-fragment modifier — not just the five fixed pseudo-states (`hover`, `focus`, `focusVisible`, `active`, `disabled`) — without pre-declaring it in `panda.config.ts`.
+
+### API
+
+```ts
+const containerMarker = marker("container");
+
+css({
+  // existing shortcut stays — equivalent to `(':hover').is.ancestor`
+  [containerMarker.hover]: { bg: "red" },
+  // call form: arbitrary CSS-fragment modifier
+  [containerMarker(":has(.error)").is.ancestor]: { color: "red" },
+  [containerMarker("[data-state=open]").is.sibling]: { opacity: 1 },
+  // typed shortcut form: same five known states, but as a builder
+  [containerMarker._focusVisible.is.descendant]: { outline: "2px solid" },
+});
+```
+
+Relations: `ancestor`, `descendant`, `sibling`. No default — explicit `.is.<relation>` is required.
+
+### Compiled selectors
+
+For anchor selector `A = .bearbones-marker-<suffix>` and modifier `M`:
+
+| Relation     | Selector         |
+| ------------ | ---------------- |
+| `ancestor`   | `AM &`           |
+| `descendant` | `&:has(AM)`      |
+| `sibling`    | `AM ~ &, & ~ AM` |
+
+### Discovery
+
+Prescan ([packages/bearbones-vite/src/prescan.ts](../../../packages/bearbones-vite/src/prescan.ts)) walks the full AST of every included file and matches two computed-key shapes:
+
+- `<binding>(LITERAL).is.<relation>` — call form. Modifier must be a string literal (or template literal with no expressions); dynamic args are skipped silently.
+- `<binding>._<state>.is.<relation>` — underscore form. State must be one of the five fixed pseudo-state names; the modifier is the matching `STATE_PSEUDO[state]` selector.
+
+Each match calls `registerMarkerCondition(id, modulePath, modifier, relation)` ([marker-registry.ts](../../../packages/bearbones-vite/src/marker-registry.ts)), which deterministically derives a condition name `marker_<suffix>_<relation>_<modhash>` (where `modhash` is FNV-1a 32-bit of the modifier, 8 hex chars) and pushes the matching selector into `RegisteredMarker.relations`.
+
+### Lowering
+
+The `parser:before` transform extends `resolveKey` to recognize the same chain shapes as computed keys inside `css({…})` / `cva({…})` / `sva({…})` argument objects. Each match produces the literal Panda condition name (`_marker_<suffix>_<relation>_<modhash>`), so the extractor sees a static object literal. The synthesized marker record is now an `Object.assign(fn, …)` callable, with the function half delegating to a tiny inlined `__bearbones_relations(modifier, suffix)` helper that re-implements the same FNV-1a hash, so variable-bound chains (`const k = m(':sel').is.ancestor`) work at runtime too.
+
+### Typing
+
+`codegen-patch.ts` extends each `BearbonesMarkerRegistry` entry with:
+
+- One closed-set call overload per registered modifier — exact literal-typed result.
+- A wide-fallback `(selector: string)` overload returning template-literal-typed condition keys.
+- Five `_<state>` properties exposing the same `is.{ancestor,descendant,sibling}` literals as the corresponding `(STATE_PSEUDO[state]).is.<rel>` chain.
+
+For the wide fallback to typecheck as a computed key, `Conditions` is augmented with three template-literal index signatures per marker (`_marker_<suffix>_<rel>_${string}`). Newly-authored modifiers always typecheck; the matching CSS rule lands one codegen pass later, after prescan picks up the new literal.
+
+### Edge cases
+
+- **Dynamic modifier strings:** prescan and transform both require a `StringLiteral`. Anything else is left unrewritten; the runtime helper produces a condition name that won't have a matching Panda condition until that selector appears as a literal somewhere in the project.
+- **Hash collisions:** `registerMarkerCondition` asserts: a second call with the same condition name and a _different_ modifier throws naming both inputs. 32-bit FNV-1a × per `(marker, relation)` namespace makes this collision space ~1e-10 in practice, but the assertion catches deliberate adversarial cases.
+- **Selector escaping:** modifier is concatenated raw onto the anchor class. Garbage in, garbage out — the build doesn't validate.

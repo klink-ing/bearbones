@@ -15,6 +15,7 @@ const SAMPLE_MARKERS: readonly RegisteredMarker[] = [
     hash: "a27adb16",
     suffix: "card_a27adb16",
     anchorClass: "bearbones-marker-card_a27adb16",
+    relations: new Map(),
   },
   {
     id: "row",
@@ -22,6 +23,7 @@ const SAMPLE_MARKERS: readonly RegisteredMarker[] = [
     hash: "5ec0c285",
     suffix: "row_5ec0c285",
     anchorClass: "bearbones-marker-row_5ec0c285",
+    relations: new Map(),
   },
 ];
 
@@ -139,6 +141,56 @@ describe("patchCssArtifact — marker registry augmentation", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, []);
     expect(patched).not.toContain("declare module 'bearbones'");
     expect(patched).not.toContain("BearbonesMarkerRegistry");
+  });
+});
+
+describe("patchCssArtifact — relational marker chains", () => {
+  it("emits underscore builder properties for every marker", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    // Each underscore builder lists ancestor / descendant / sibling literals.
+    expect(patched).toMatch(
+      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_[0-9a-f]{8}"/,
+    );
+    expect(patched).toMatch(
+      /readonly _focusVisible: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_[0-9a-f]{8}"/,
+    );
+  });
+
+  it("emits one call overload per registered modifier", () => {
+    const cardWithRelations: RegisteredMarker = {
+      ...SAMPLE_MARKERS[0]!,
+      relations: new Map([
+        [
+          "marker_card_a27adb16_ancestor_aaaaaaaa",
+          {
+            modifier: ":has(.error)",
+            relation: "ancestor" as const,
+            selector: ".bearbones-marker-card_a27adb16:has(.error) &",
+          },
+        ],
+      ]),
+    };
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, [cardWithRelations]);
+    expect(patched).toContain('(selector: ":has(.error)"): { readonly is: { readonly ancestor:');
+  });
+
+  it("always emits a wide-string fallback overload", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    expect(patched).toContain("(selector: string): { readonly is: { readonly ancestor:");
+  });
+
+  it("appends a Conditions augmentation with template-literal index signatures", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    expect(patched).toContain("declare module '../types/conditions'");
+    expect(patched).toContain("interface Conditions");
+    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_ancestor_\$\{string\}`\]: string;/);
+    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_descendant_\$\{string\}`\]: string;/);
+    expect(patched).toMatch(/\[k: `_marker_card_a27adb16_sibling_\$\{string\}`\]: string;/);
+  });
+
+  it("omits the Conditions augmentation when no markers are registered", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, []);
+    expect(patched).not.toContain("declare module '../types/conditions'");
   });
 });
 

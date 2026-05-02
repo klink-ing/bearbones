@@ -4,8 +4,14 @@ import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import { resolveUtility, type StyleFragment } from "./utility-map.ts";
 import {
+  MARKER_RELATIONS,
   MARKER_STATES,
+  STATE_PSEUDO,
+  buildRelationConditionName,
+  modifierHash,
   registerMarker,
+  registerMarkerCondition,
+  type MarkerRelation,
   type MarkerState,
   type RegisteredMarker,
 } from "./marker-registry.ts";
@@ -15,11 +21,15 @@ import {
  *
  * Responsibilities:
  *   1. Find every `marker('id')` call at module scope and register it. We
- *      rewrite the call site to a synthesized record literal so the runtime
- *      sees a typed record matching the `BearbonesMarker<Id>` interface.
+ *      rewrite the call site to a synthesized callable-record so the runtime
+ *      sees a typed value matching the `BearbonesMarker<Id>` interface — both
+ *      the property shortcuts and the `(modifier).is.<relation>` chain.
  *   2. Find every `css(...)` call (only the local `css` binding from
  *      `bearbones`) and lower utility-string and condition-object arguments
- *      into Panda's native object form.
+ *      into Panda's native object form. Inside the object form, computed keys
+ *      `[<binding>.<shortcut>]`, `[<binding>(LITERAL).is.<relation>]`, and
+ *      `[<binding>._<state>.is.<relation>]` are lowered to literal Panda
+ *      condition names so the extractor sees a static object.
  *   3. Emit a transformed source string. Panda's extractor then parses the
  *      transformed source as if it were authored that way.
  *
@@ -165,6 +175,8 @@ function lowerArgument(node: any, markers: MarkerCallContext): StyleFragment | n
  *   - A static key name (`_hover`, `padding`) — passed through.
  *   - A computed `[marker.<state>]` key — rewritten to the registered Panda
  *     condition name like `_markerHover_card_a3f4b2`.
+ *   - A computed `[marker(LITERAL).is.<relation>]` or `[marker._<state>.is.<relation>]`
+ *     key — rewritten to the registered relational condition name.
  */
 function lowerObject(node: any, markers: MarkerCallContext): StyleFragment | null {
   const out: StyleFragment = {};
@@ -185,11 +197,15 @@ function resolveKey(prop: any, markers: MarkerCallContext): string | null {
     if (prop.key.type === "StringLiteral") return prop.key.value;
     return null;
   }
-  // Computed key: the only supported form is `[<markerBinding>.<state>]`
+  // Computed key: try the relational chain shapes first; fall back to the
+  // simple `[marker.<state>]` shortcut shape.
+  const relational = resolveRelationalKey(prop.key, markers);
+  if (relational != null) return relational;
   if (
     prop.key.type === "MemberExpression" &&
     prop.key.object.type === "Identifier" &&
-    prop.key.property.type === "Identifier"
+    prop.key.property.type === "Identifier" &&
+    !prop.key.computed
   ) {
     const bindingName = prop.key.object.name;
     const state = prop.key.property.name;
@@ -201,8 +217,75 @@ function resolveKey(prop: any, markers: MarkerCallContext): string | null {
   return null;
 }
 
+/**
+ * Match `<binding>(LITERAL).is.<relation>` and `<binding>._<state>.is.<relation>`
+ * computed keys. Returns the underscore-prefixed Panda condition name (i.e.,
+ * what consumers write inside `[...]`), or `null` if the key isn't one of
+ * the recognized relational chain shapes.
+ *
+ * Side effect: registers the (modifier, relation) pair against the marker so
+ * `buildMarkerConditions()` emits a Panda condition at config:resolved time.
+ * Idempotent — a second call with the same triple is a no-op.
+ */
+function resolveRelationalKey(node: any, markers: MarkerCallContext): string | null {
+  if (node?.type !== "MemberExpression" || node.computed) return null;
+  if (node.property.type !== "Identifier") return null;
+  const relation = node.property.name as string;
+  if (!isValidRelation(relation)) return null;
+
+  const middle = node.object;
+  if (middle?.type !== "MemberExpression" || middle.computed) return null;
+  if (middle.property.type !== "Identifier" || middle.property.name !== "is") return null;
+
+  const inner = middle.object;
+  let bindingName: string | null = null;
+  let modifier: string | null = null;
+
+  if (inner?.type === "CallExpression") {
+    if (inner.callee.type !== "Identifier") return null;
+    bindingName = inner.callee.name;
+    modifier = literalStringArg(inner.arguments[0]);
+  } else if (inner?.type === "MemberExpression" && !inner.computed) {
+    if (inner.object.type !== "Identifier") return null;
+    bindingName = inner.object.name;
+    if (inner.property.type !== "Identifier") return null;
+    const propName = inner.property.name as string;
+    if (!propName.startsWith("_")) return null;
+    const stateName = propName.slice(1);
+    if (!isValidState(stateName)) return null;
+    modifier = STATE_PSEUDO[stateName];
+  } else {
+    return null;
+  }
+
+  if (bindingName == null || modifier == null) return null;
+  const marker = markers.byBinding(bindingName);
+  if (!marker) return null;
+
+  const { conditionName } = registerMarkerCondition(
+    marker.id,
+    marker.modulePath,
+    modifier,
+    relation,
+  );
+  return `_${conditionName}`;
+}
+
 function isValidState(name: string): name is MarkerState {
   return (MARKER_STATES as readonly string[]).includes(name);
+}
+
+function isValidRelation(name: string): name is MarkerRelation {
+  return (MARKER_RELATIONS as readonly string[]).includes(name);
+}
+
+function literalStringArg(arg: any): string | null {
+  if (!arg) return null;
+  if (arg.type === "StringLiteral") return arg.value;
+  if (arg.type === "TemplateLiteral" && arg.expressions.length === 0) {
+    return arg.quasis.map((q: any) => q.value.cooked).join("");
+  }
+  return null;
 }
 
 function capitalize(s: string): string {
@@ -389,17 +472,19 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
  * binding the call-site lowering can resolve when it sees `[x.hover]` keys.
  *
  * For each declaration, we also rewrite the right-hand side to a synthesized
- * object literal carrying the marker's anchor class and the registered
- * condition keys — that's what the runtime `BearbonesMarker<Id>` interface
- * expects.
+ * callable record carrying the marker's anchor class, the registered shortcut
+ * keys, and a tiny IIFE that handles `(modifier).is.<relation>` chains at
+ * runtime. Inline FNV-1a keeps build-side and runtime modifier hashes aligned
+ * without a shared bundle import.
  */
 function processMarkerDeclarations(
   ast: any,
   bindings: ImportBindings,
   modulePath: string,
   source: MagicString,
-): MarkerCallContext {
+): { ctx: MarkerCallContext; needsRelationsHelper: boolean } {
   const ctx = new MarkerCallContext();
+  let needsRelationsHelper = false;
 
   // Track every relative import so when we see a `[binding.state]` computed
   // key in this file, we know which source file to consult for the
@@ -415,7 +500,7 @@ function processMarkerDeclarations(
     }
   }
 
-  if (bindings.marker.size === 0) return ctx;
+  if (bindings.marker.size === 0) return { ctx, needsRelationsHelper };
   for (const node of ast.program.body) {
     const decl =
       node.type === "ExportNamedDeclaration" && node.declaration ? node.declaration : node;
@@ -437,17 +522,55 @@ function processMarkerDeclarations(
       // doesn't need a real `marker()` implementation.
       const replacement = renderMarkerRecord(registered);
       source.overwrite(declarator.init.start, declarator.init.end, replacement);
+      needsRelationsHelper = true;
     }
   }
-  return ctx;
+  return { ctx, needsRelationsHelper };
 }
 
+/**
+ * Inline runtime helper. Builds an `{ is: { ancestor, descendant, sibling } }`
+ * object for a given `(modifier, suffix)` pair. The FNV-1a 32-bit hash MUST
+ * match `modifierHash` in `marker-registry.ts` byte-for-byte: build-side
+ * registers conditions named after the build-side hash, and the runtime
+ * computes the same key from the same selector at call sites the transform
+ * can't statically lower (variable bindings, dynamic selectors).
+ *
+ * Emitted once per file that declares any marker. The synthesized marker
+ * record closes over this constant via a normal lexical reference.
+ */
+const RELATIONS_HELPER_NAME = "__bearbones_relations";
+const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, s) => {
+  let _h = 0x811c9dc5 | 0;
+  for (let i = 0; i < m.length; i++) _h = Math.imul(_h ^ m.charCodeAt(i), 0x01000193) | 0;
+  const x = (_h >>> 0).toString(16).padStart(8, "0");
+  return { is: { ancestor: \`_marker_\${s}_ancestor_\${x}\`, descendant: \`_marker_\${s}_descendant_\${x}\`, sibling: \`_marker_\${s}_sibling_\${x}\` } };
+};`;
+
 function renderMarkerRecord(marker: RegisteredMarker): string {
-  const fields = [
+  const fields: string[] = [
     `anchor: ${JSON.stringify(marker.anchorClass)}`,
     ...MARKER_STATES.map((state) => `${state}: "_marker${capitalize(state)}_${marker.suffix}"`),
+    // Build the underscore builder forms eagerly with literal strings. The
+    // inlined hash function below rebuilds the same literals at runtime via
+    // the call form, so both paths agree.
+    ...MARKER_STATES.map((state) => {
+      const modifier = STATE_PSEUDO[state];
+      const h = modifierHash(modifier);
+      const ancestor = buildRelationConditionName(marker.suffix, "ancestor", modifier);
+      const descendant = buildRelationConditionName(marker.suffix, "descendant", modifier);
+      const sibling = buildRelationConditionName(marker.suffix, "sibling", modifier);
+      // `h` is captured for symmetry with the runtime's computed naming and
+      // to make the snapshot self-documenting; the values below are derived
+      // from it deterministically.
+      void h;
+      return `_${state}: { is: { ancestor: "_${ancestor}", descendant: "_${descendant}", sibling: "_${sibling}" } }`;
+    }),
   ];
-  return `({ ${fields.join(", ")} })`;
+  // Object.assign(fn, { ...shortcuts }) — the function half handles the
+  // `(modifier).is.<relation>` call form, the assigned properties cover the
+  // existing shortcuts and the `_<state>.is.<relation>` underscore form.
+  return `Object.assign((m) => ${RELATIONS_HELPER_NAME}(m, ${JSON.stringify(marker.suffix)}), { ${fields.join(", ")} })`;
 }
 
 /**
@@ -545,8 +668,21 @@ export function transform(input: TransformInput): TransformResult {
   trackReBindings(ast, bindings);
 
   const ms = new MagicString(input.source);
-  const markers = processMarkerDeclarations(ast, bindings, input.filePath, ms);
+  const { ctx: markers, needsRelationsHelper } = processMarkerDeclarations(
+    ast,
+    bindings,
+    input.filePath,
+    ms,
+  );
   processCalls(ast, bindings, ms, markers);
+
+  if (needsRelationsHelper) {
+    // Prepend the helper. The transform's argument-lowering pass produces
+    // static condition strings inside `css({})` calls, but variable bindings
+    // of `<binding>(sel).is.<rel>` (and runtime evaluation in general) need
+    // the helper to compute matching condition names.
+    ms.prepend(`${RELATIONS_HELPER_SOURCE}\n`);
+  }
 
   const result = ms.toString();
   return { content: result === input.source ? undefined : result };

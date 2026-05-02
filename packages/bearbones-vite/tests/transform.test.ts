@@ -163,3 +163,96 @@ export const x = css("flex");
     expect(result.content).toContain('css({"display":"flex"})');
   });
 });
+
+describe("transform — relational marker chains", () => {
+  it("synthesizes a callable marker record with the relations helper", () => {
+    const result = transform({
+      filePath: "/virtual/markers.ts",
+      source: `
+import { marker } from "bearbones";
+export const cardMarker = marker("card");
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    // Helper is prepended once per file.
+    expect(result.content).toContain("__bearbones_relations");
+    // Synthesized record uses Object.assign to wrap the call form + property
+    // shortcuts. Function half delegates to the helper with the marker suffix.
+    expect(result.content).toContain("Object.assign((m) => __bearbones_relations(m, ");
+    // Underscore builder forms are emitted with literal-string is.<rel> keys.
+    expect(result.content).toMatch(
+      /_hover: \{ is: \{ ancestor: "_marker_card_[0-9a-f]{8}_ancestor_[0-9a-f]{8}"/,
+    );
+  });
+
+  it("lowers marker(LITERAL).is.<relation> as a computed key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("container");
+export const x = css({ [m(":has(.error)").is.ancestor]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"_marker_container_[0-9a-f]{8}_ancestor_[0-9a-f]{8}":\{"p":"4"\}/,
+    );
+  });
+
+  it("lowers marker._<state>.is.<relation> as a computed key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("panel");
+export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"_marker_panel_[0-9a-f]{8}_descendant_[0-9a-f]{8}":\{"p":"4"\}/,
+    );
+  });
+
+  it("registers (modifier, relation) pairs in the marker registry", () => {
+    transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("widget");
+export const x = css({
+  [m(":has(.error)").is.ancestor]: "p-4",
+  [m("[data-state=open]").is.sibling]: "p-8",
+  [m._hover.is.descendant]: "p-4",
+});
+      `.trim(),
+    });
+    const widget = listMarkers().find((mk) => mk.id === "widget");
+    expect(widget).toBeDefined();
+    const modifiers = Array.from(widget!.relations.values()).map((r) => r.modifier);
+    expect(modifiers).toEqual(
+      expect.arrayContaining([":has(.error)", "[data-state=open]", ":is(:hover, [data-hover])"]),
+    );
+  });
+
+  it("leaves the chain untouched when modifier is dynamic", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("dyn");
+const sel = ":hover";
+export const x = css({ [m(sel).is.ancestor]: "p-4" });
+      `.trim(),
+    });
+    // The css() argument can't be lowered (computed key resolves to null),
+    // so the entire object stays as authored.
+    expect(result.content).toBeDefined();
+    expect(result.content).toContain("[m(sel).is.ancestor]");
+  });
+});

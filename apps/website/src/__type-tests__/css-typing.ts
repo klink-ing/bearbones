@@ -40,6 +40,16 @@ css({ "&:focus-within": "p-4" });
 // Array of utility strings under an arbitrary nested selector.
 css({ "&:focus-within": ["p-4", "bg-blue-500"] });
 
+// Marker call form: arbitrary CSS-fragment modifier with explicit relation.
+css({ [cardMarker(":has(.flag-error)").is.ancestor]: "text-red-500" });
+
+// Marker underscore form: typed shortcut against a known pseudo-state with
+// explicit relation.
+css({ [cardMarker._focusVisible.is.descendant]: "text-blue-500" });
+
+// Sibling relation works too.
+css({ [cardMarker(":focus-within").is.sibling]: "text-gray-700" });
+
 // --- Rejected forms -----------------------------------------------------
 
 // Typo'd utility name — `13` is not a Panda spacing token (the scale jumps

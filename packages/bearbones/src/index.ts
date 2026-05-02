@@ -108,13 +108,49 @@ export type BearbonesMarkerRuntime<Id extends string = string> =
     ? BearbonesMarkerRegistry[Id]
     : DefaultBearbonesMarker<Id>;
 
+/**
+ * The relational builder returned from a marker call (`m(':sel')`) or an
+ * underscore shortcut (`m._hover`). `.is.<relation>` resolves to a Panda
+ * condition key that targets the styled element when an `ancestor`,
+ * `descendant`, or `sibling` of the marker anchor matches the modifier.
+ *
+ * For unregistered marker ids, the literal condition keys aren't known yet,
+ * so we widen with `${string}` template literals. Once the codegen patch has
+ * emitted `BearbonesMarkerRegistry[Id]` (after the prescan), consumers see
+ * the precise literals.
+ */
+export interface DefaultBearbonesMarkerBuilder<Id extends string> {
+  readonly is: {
+    readonly ancestor: `_marker_${Id}_${string}_ancestor_${string}`;
+    readonly descendant: `_marker_${Id}_${string}_descendant_${string}`;
+    readonly sibling: `_marker_${Id}_${string}_sibling_${string}`;
+  };
+}
+
 export interface DefaultBearbonesMarker<Id extends string = string> {
   readonly anchor: string;
+  // Existing shortcuts (no change). Each is the Panda condition key for the
+  // element being styled when an ancestor with this marker is in that state.
   readonly hover: `_markerHover_${Id}_${string}`;
   readonly focus: `_markerFocus_${Id}_${string}`;
   readonly active: `_markerActive_${Id}_${string}`;
   readonly focusVisible: `_markerFocusVisible_${Id}_${string}`;
   readonly disabled: `_markerDisabled_${Id}_${string}`;
+  // Underscore builder form: each yields an `.is.{ancestor,descendant,sibling}`
+  // chain that lets consumers pick the relation explicitly.
+  readonly _hover: DefaultBearbonesMarkerBuilder<Id>;
+  readonly _focus: DefaultBearbonesMarkerBuilder<Id>;
+  readonly _active: DefaultBearbonesMarkerBuilder<Id>;
+  readonly _focusVisible: DefaultBearbonesMarkerBuilder<Id>;
+  readonly _disabled: DefaultBearbonesMarkerBuilder<Id>;
+  /**
+   * Call form: pass an arbitrary CSS-fragment modifier (e.g. `:has(.error)`,
+   * `[data-state=open]`, `:focus-within`) and pick a relation via `.is`.
+   * The `@bearbones/vite` prescan must see the modifier as a string literal
+   * so it can register a Panda condition for it; dynamic strings will land
+   * at runtime as keys for unregistered conditions and produce no CSS.
+   */
+  (selector: string): DefaultBearbonesMarkerBuilder<Id>;
 }
 
 // Note: `BearbonesUtilityName` is no longer re-exported from this package.
