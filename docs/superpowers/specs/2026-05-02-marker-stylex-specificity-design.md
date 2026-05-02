@@ -198,7 +198,11 @@ Three layers, in order of how directly they exercise the production path:
 
 - Existing `ancestor`, `descendant`, `sibling` tests are rewritten against the new selector shapes. The `sibling` test is renamed to `siblingAny`.
 - New `siblingBefore` and `siblingAfter` tests assert the exact emitted strings.
-- A "specificity contract" test asserts that every selector returned by `buildRelationSelector` (across all relations and a representative modifier): (a) contains the substring `:where(`, and (b) the first occurrence of `:where(` precedes the first `&` in selectors that don't start with `&`. The first half catches a missing wrapper; the second catches the "wrap `&` instead of the marker" misplacement called out in the alternatives section. Together they're a structural proxy for the specificity guarantee — if a future edit breaks either, this test fails.
+- A "specificity contract" test feeds each emitted selector through a real CSS specificity calculator and asserts the result equals `(0, 1, 0)` — exactly one class, matching a plain utility. This is the load-bearing assertion: it catches missing `:where()` wrapping, wrapper misplacement, and any future shape edit that bumps specificity, all in one check. Implementation:
+  1. Add `@bramus/specificity` (`^2.4.2`) as a dev-dependency of `@bearbones/vite`. It's a maintained ESM package by the author of the canonical CSS Specificity Calculator.
+  2. For each relation in `MARKER_RELATIONS` × a representative modifier (`:hover`), call `buildRelationSelector(anchor, modifier, relation)`.
+  3. Substitute `&` with a sentinel class `.target` to produce a real CSS selector (mimicking Panda's `postcss-nested` substitution at emit time). Use a global regex on the literal `&` token to handle multi-`&` shapes like `siblingAny`.
+  4. Pass the substituted selector to `Specificity.calculate()`. For comma-joined selectors the API returns one specificity per branch — assert _every_ branch reports `(0, 1, 0)`.
 - The `endsWith(" &")` / `startsWith("&")` Panda-compatibility test is updated to cover all five relations and document which Panda nesting type each maps to.
 
 ### 2. Unit tests for `transform.ts`
@@ -219,8 +223,6 @@ Three layers, in order of how directly they exercise the production path:
 
 - **Browser support for `:where()` and `:has()`.** Both shipped in all evergreen browsers in early 2023. `:has()` is already required by the existing `descendant` relation. `:where()` is more broadly supported than `:has()`; if `:has()` works, `:where()` works.
 
-- **Specificity test is structural, not semantic.** The "every selector contains `:where(`" assertion catches the most likely regression (forgetting the wrapper) but doesn't catch a subtle misplacement (e.g., wrapping `&` instead of the marker observer). A semantic test would require running the selector through a CSS specificity calculator, which is more machinery than the value justifies for an internal MVP. The website demo serves as the empirical specificity check.
-
 - **Selector escaping.** Modifier strings are concatenated raw onto the anchor class (unchanged from current behavior). Garbage in, garbage out. Existing constraint, not a regression.
 
 - **`siblingAny` template-literal type complexity.** The TS type for `siblingAny` interpolates the anchor class twice with `${string}` between. TypeScript handles this fine; the `AnySelector` match works because the string contains `&`. No instantiation depth risk at the scale of bearbones' marker count.
@@ -236,7 +238,8 @@ Three layers, in order of how directly they exercise the production path:
 
 - `packages/bearbones-vite/src/marker-registry.ts` — replace `switch` with `RELATION_SELECTORS` table, expand `MARKER_RELATIONS`, update `buildRelationSelector`
 - `packages/bearbones-vite/src/transform.ts` — derive runtime helper and `renderMarkerRecord` from the new table
-- `packages/bearbones-vite/tests/marker-registry.test.ts` — update three existing tests, add two new, add specificity-contract assertion
+- `packages/bearbones-vite/tests/marker-registry.test.ts` — update three existing tests, add two new, add specificity-contract assertion via `@bramus/specificity`
+- `packages/bearbones-vite/package.json` — add `@bramus/specificity` (`^2.4.2`) to `devDependencies`
 - `packages/bearbones-vite/tests/transform.test.ts` — update three existing assertions, add two new lowering tests
 - `packages/bearbones/src/index.ts` — update `BearbonesMarkerBuilder.is` template-literal types to the five new shapes
 - `apps/website/src/__type-tests__/css-typing.ts` — rename `.is.sibling` → `.is.siblingAny` on line 52
