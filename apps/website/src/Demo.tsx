@@ -56,8 +56,8 @@ export function Demo() {
       {/* Object form for one-off styles that are outside the utility vocabulary. */}
       <div
         className={css({
-          gap: "calc(var(--spacing-4) + 0.5rem)",
-          padding: "1rem",
+          gap: "[calc(var(--spacing-4) + 0.5rem)]",
+          padding: "[1rem]",
           backgroundColor: "blue.50",
           borderRadius: "md",
         })}
