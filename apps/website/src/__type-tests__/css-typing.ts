@@ -42,9 +42,10 @@ css({ "&:focus-within": ["p-4", "bg-blue-500"] });
 
 // --- Rejected forms -----------------------------------------------------
 
-// Typo'd utility name — not a member of BearbonesUtilityName.
+// Typo'd utility name — `13` is not a Panda spacing token (the scale jumps
+// from 12 to 14), so `p-13` is not a member of BearbonesUtilityName.
 // @ts-expect-error
-css("p-44");
+css("p-13");
 
 // Unknown utility prefix.
 // @ts-expect-error

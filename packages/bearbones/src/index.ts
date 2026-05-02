@@ -11,10 +11,12 @@
  *     Lowered by `@bearbones/vite`'s parser:before transform into a
  *     synthesized object literal at build time.
  *
- *   - Type-only re-export of `BearbonesUtilityName` from `@bearbones/vite`.
- *     The actual augmentation of Panda's `css()` signature happens in
+ *   - Type augmentation of Panda's `css()` signature happens in
  *     `@bearbones/vite`'s `codegen:prepare` hook, which patches Panda's
- *     emitted `styled-system/css/css.d.ts` directly.
+ *     emitted `styled-system/css/css.d.ts` directly. The patched file
+ *     exports a project-accurate `BearbonesUtilityName` union derived
+ *     from Panda's resolved tokens — import from there if you want to
+ *     reference the union in your own code.
  *
  *   - Re-exports of `css`, `cva`, `sva` from the host project's
  *     `styled-system/` directory (Panda's generated runtime). At install time
@@ -78,13 +80,12 @@ export interface BearbonesMarkerRuntime<Id extends string = string> {
   readonly disabled: `_markerDisabled_${Id}_${string}`;
 }
 
-/**
- * The closed union of every utility-string name accepted by `css()`.
- * Re-exported from `@bearbones/vite` where the source-of-truth scales live.
- *
- * Useful for typing your own helper functions that pass utility names through
- * to `css()`. The `css()` function itself doesn't need this type imported —
- * the `codegen:prepare` hook in `@bearbones/vite` patches Panda's emitted
- * `css.d.ts` so utility strings are accepted natively at the call site.
- */
-export type { BearbonesUtilityName } from "@bearbones/vite";
+// Note: `BearbonesUtilityName` is no longer re-exported from this package.
+// The closed set of valid utility names is derived from the host project's
+// resolved Panda tokens at codegen time, so the only project-accurate
+// version of the type lives in the patched `styled-system/css/css.d.ts`:
+//
+//   import type { BearbonesUtilityName } from '../styled-system/css';
+//
+// The `css()` function itself doesn't need this import — utility strings are
+// accepted natively at the call site via the same patch.

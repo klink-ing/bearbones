@@ -4,9 +4,33 @@ import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import { transform } from "../src/transform.ts";
 import { __resetRegistry, listMarkers } from "../src/marker-registry.ts";
+import { populateUtilityMapFromTokens } from "../src/utility-map.ts";
+
+// Minimal token tree exercising the same shapes Panda emits. Just enough to
+// cover everything the transform tests use (p-4, bg-blue-500, gap, etc.).
+// Production runs populate this from `config.theme.tokens` at config:resolved.
+const MOCK_TOKENS = {
+  spacing: {
+    "0": { value: "0" },
+    "4": { value: "1rem" },
+    "8": { value: "2rem" },
+  },
+  colors: {
+    blue: {
+      "500": { value: "#3b82f6" },
+      "800": { value: "#1e40af" },
+    },
+    white: { value: "#fff" },
+  },
+  fontSizes: {},
+  fontWeights: {},
+  radii: {},
+  shadows: {},
+};
 
 beforeEach(() => {
   __resetRegistry();
+  populateUtilityMapFromTokens(MOCK_TOKENS);
 });
 
 describe("transform", () => {

@@ -40,6 +40,7 @@ import { transform } from "./transform.ts";
 import { buildMarkerConditions } from "./marker-registry.ts";
 import { prescanMarkers } from "./prescan.ts";
 import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
+import { populateUtilityMapFromTokens } from "./utility-map.ts";
 
 export interface BearbonesHooksOptions {
   /**
@@ -73,6 +74,12 @@ export interface BearbonesHooksOptions {
 export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
   return {
     "config:resolved": ({ config }: { config: any }) => {
+      // Populate the utility-string lookup table from the host project's
+      // resolved Panda tokens. After this runs, every utility-shorthand
+      // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
+      // the actual tokens available in the project — no manual scale arrays.
+      populateUtilityMapFromTokens(config.theme?.tokens);
+
       // Pre-scan every included file for `marker()` declarations so the
       // resulting condition set is present in the config before Panda's
       // extractor runs.
@@ -167,11 +174,15 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
 
 // Re-export internal pieces that the test suite consumes.
 export { listMarkers } from "./marker-registry.ts";
-export { listUtilities } from "./utility-map.ts";
-// Re-export the derived utility-name union so consumers (and the `bearbones`
-// facade) can use it for typing their own helpers. The closed-set version
-// also lands in the patched `css.d.ts` via `codegen-patch.ts`.
-export type { BearbonesUtilityName } from "./utility-map.ts";
+export { listUtilities, populateUtilityMapFromTokens } from "./utility-map.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
 export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
 export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
+
+// NOTE: `BearbonesUtilityName` is no longer re-exported as a static type.
+// The set of valid utility names is now derived from the host project's
+// resolved Panda tokens at runtime; the only authoritative type union is
+// the one emitted into the patched `css.d.ts` by `codegen-patch.ts`.
+// Consumers wanting a typed utility-name union should import it from there:
+//
+//   import type { BearbonesUtilityName } from '../styled-system/css';
