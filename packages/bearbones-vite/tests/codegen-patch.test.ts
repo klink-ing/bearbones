@@ -1,7 +1,29 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { patchCssArtifact, patchArtifacts, type PandaArtifact } from "../src/codegen-patch.ts";
+import { __resetRegistry, type RegisteredMarker } from "../src/marker-registry.ts";
+
+beforeEach(() => {
+  __resetRegistry();
+});
+
+const SAMPLE_MARKERS: readonly RegisteredMarker[] = [
+  {
+    id: "card",
+    modulePath: "/virtual/markers.ts",
+    hash: "a27adb16",
+    suffix: "card_a27adb16",
+    anchorClass: "bearbones-marker-card_a27adb16",
+  },
+  {
+    id: "row",
+    modulePath: "/virtual/markers.ts",
+    hash: "5ec0c285",
+    suffix: "row_5ec0c285",
+    anchorClass: "bearbones-marker-row_5ec0c285",
+  },
+];
 
 // Fixture is named `.d.ts.txt` (not `.d.ts`) so oxfmt and tsc skip it.
 // We need Panda's *exact* emitted bytes — including its single-quote import
@@ -80,6 +102,43 @@ describe("patchCssArtifact", () => {
   it("matches snapshot for a representative utility list", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES);
     expect(patched).toMatchSnapshot();
+  });
+
+  it("does NOT inject the obsolete BearbonesMarkerConditionKey template type", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    // Marker condition keys live in `keyof Conditions` directly (registered by
+    // the bearbones preset). The old template-literal mapped slot caused
+    // index-signature widening; it should be gone.
+    expect(patched).not.toContain("BearbonesMarkerConditionKey");
+  });
+});
+
+describe("patchCssArtifact — marker registry augmentation", () => {
+  it("appends a `declare module 'bearbones'` block when markers are registered", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    expect(patched).toContain("declare module 'bearbones'");
+    expect(patched).toContain("interface BearbonesMarkerRegistry");
+  });
+
+  it("emits one entry per registered marker with literal-string condition keys", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
+    // Card entry: id key, anchor class, and one literal per state.
+    expect(patched).toContain('"card": {');
+    expect(patched).toContain('readonly anchor: "bearbones-marker-card_a27adb16";');
+    expect(patched).toContain('readonly hover: "_markerHover_card_a27adb16";');
+    expect(patched).toContain('readonly focus: "_markerFocus_card_a27adb16";');
+    expect(patched).toContain('readonly focusVisible: "_markerFocusVisible_card_a27adb16";');
+    expect(patched).toContain('readonly active: "_markerActive_card_a27adb16";');
+    expect(patched).toContain('readonly disabled: "_markerDisabled_card_a27adb16";');
+    // Row entry exists too.
+    expect(patched).toContain('"row": {');
+    expect(patched).toContain('readonly hover: "_markerHover_row_5ec0c285";');
+  });
+
+  it("omits the augmentation block entirely when no markers are registered", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, []);
+    expect(patched).not.toContain("declare module 'bearbones'");
+    expect(patched).not.toContain("BearbonesMarkerRegistry");
   });
 });
 

@@ -12,28 +12,12 @@ export type BearbonesUtilityName =
   | "flex"
 ;
 
-// Template-literal type matching the keys produced by \`BearbonesMarker\`'s
-// runtime shape. The specific hash suffix is opaque to consumers (it's
-// computed at build time from the declaring module's path), so the type
-// must accept any \`\${string}\` in that position. Panda's own \`Conditions\`
-// interface contains the *resolved* hashed names — sufficient for runtime
-// extraction but insufficient for type-checking call sites that reference
-// the marker symbol's \`hover\` / \`focus\` / etc. properties via computed key.
-export type BearbonesMarkerConditionKey =
-  | \`_markerHover_\${string}_\${string}\`
-  | \`_markerFocus_\${string}_\${string}\`
-  | \`_markerFocusVisible_\${string}_\${string}\`
-  | \`_markerActive_\${string}_\${string}\`
-  | \`_markerDisabled_\${string}_\${string}\`;
-
 type BearbonesNestedObject<P> = P & {
   [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
 } & {
   [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
 } & {
   [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
-} & {
-  [K in BearbonesMarkerConditionKey]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
 };
 
 export type BearbonesNested<P> = BearbonesUtilityName | BearbonesNestedObject<P>;

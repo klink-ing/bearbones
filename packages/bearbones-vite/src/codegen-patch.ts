@@ -30,6 +30,7 @@
  */
 
 import { listUtilities } from "./utility-map.ts";
+import { listMarkers, MARKER_STATES, type RegisteredMarker } from "./marker-registry.ts";
 
 /**
  * The anchor we replace in Panda's emitted `css.d.ts`. Captured verbatim from
@@ -46,7 +47,11 @@ const STYLES_ANCHOR = "type Styles = SystemStyleObject | undefined | null | fals
  * Throws if the source doesn't contain the expected anchor. The thrown error
  * names the missing anchor explicitly so the failure is self-diagnosing.
  */
-export function patchCssArtifact(source: string, utilityNames: readonly string[]): string {
+export function patchCssArtifact(
+  source: string,
+  utilityNames: readonly string[],
+  markers: readonly RegisteredMarker[] = [],
+): string {
   if (!source.includes(STYLES_ANCHOR)) {
     throw new Error(
       `@bearbones/vite codegen-patch: expected anchor not found in css.d.ts.\n` +
@@ -80,18 +85,29 @@ export function patchCssArtifact(source: string, utilityNames: readonly string[]
     );
   }
 
-  return source
-    .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
-    .replace(STYLES_ANCHOR, patchedStyles);
+  const markerRegistryAugmentation = renderMarkerRegistryAugmentation(markers);
+
+  // The marker-registry augmentation is appended at the end of the file. It's
+  // a `declare module 'bearbones'` block that injects literal-string condition
+  // keys for every marker discovered by the prescan. Consumers' `cardMarker.hover`
+  // then has type `'_markerHover_card_a27adb16'` (specific) instead of
+  // `` `_markerHover_card_${string}` `` (template literal) — eliminating the
+  // string-index widening that template literals cause when used as computed
+  // keys alongside other static keys in the same object literal.
+  return (
+    source
+      .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
+      .replace(STYLES_ANCHOR, patchedStyles) + markerRegistryAugmentation
+  );
 }
 
 /**
- * Convenience wrapper that patches against the live utility list. Used by the
- * `codegen:prepare` hook in production; tests pass a fixed list to keep
- * snapshots stable.
+ * Convenience wrapper that patches against the live utility + marker lists.
+ * Used by the `codegen:prepare` hook in production; tests pass fixed inputs
+ * to keep snapshots stable.
  */
 export function patchCssArtifactLive(source: string): string {
-  return patchCssArtifact(source, listUtilities());
+  return patchCssArtifact(source, listUtilities(), listMarkers());
 }
 
 function renderUtilityUnion(names: readonly string[]): string {
@@ -121,24 +137,18 @@ function renderInjectedTypes(utilityUnion: string): string {
   // Distributing `Omit` over `BearbonesUtilityName | ObjectType` widens the
   // string-literal union to a structural string type and the closed-set
   // checking would silently break.
+  // No `BearbonesMarkerConditionKey` mapped-type slot here. Marker condition
+  // keys ARE keys of Panda's `Conditions` interface (registered by the bearbones
+  // preset + prescan), so `[K in keyof Conditions]` already covers them. Adding
+  // a separate template-literal mapped slot used to introduce a `string` index
+  // signature on consumer object literals that conflicted with Panda's
+  // `CssVarProperties[ '--${string}' ]` index — see the marker-registry
+  // augmentation appended below for how we narrow `cardMarker.hover` to a
+  // specific literal that lands inside `keyof Conditions` directly.
   return [
     "export type BearbonesUtilityName =",
     utilityUnion,
     ";",
-    "",
-    "// Template-literal type matching the keys produced by `BearbonesMarker`'s",
-    "// runtime shape. The specific hash suffix is opaque to consumers (it's",
-    "// computed at build time from the declaring module's path), so the type",
-    "// must accept any `${string}` in that position. Panda's own `Conditions`",
-    "// interface contains the *resolved* hashed names — sufficient for runtime",
-    "// extraction but insufficient for type-checking call sites that reference",
-    "// the marker symbol's `hover` / `focus` / etc. properties via computed key.",
-    "export type BearbonesMarkerConditionKey =",
-    "  | `_markerHover_${string}_${string}`",
-    "  | `_markerFocus_${string}_${string}`",
-    "  | `_markerFocusVisible_${string}_${string}`",
-    "  | `_markerActive_${string}_${string}`",
-    "  | `_markerDisabled_${string}_${string}`;",
     "",
     "type BearbonesNestedObject<P> = P & {",
     "  [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
@@ -146,8 +156,6 @@ function renderInjectedTypes(utilityUnion: string): string {
     "  [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
     "} & {",
     "  [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
-    "} & {",
-    "  [K in BearbonesMarkerConditionKey]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
     "};",
     "",
     "export type BearbonesNested<P> = BearbonesUtilityName | BearbonesNestedObject<P>;",
@@ -157,6 +165,54 @@ function renderInjectedTypes(utilityUnion: string): string {
     "  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, 'base'>;",
     "",
   ].join("\n");
+}
+
+/**
+ * Render a `declare module 'bearbones'` block that augments the empty
+ * `BearbonesMarkerRegistry` interface in the bearbones package with one
+ * entry per marker discovered by the prescan. Each entry uses literal-string
+ * condition keys (e.g., `hover: '_markerHover_card_a27adb16'`) matching the
+ * actual hashed condition names registered with Panda.
+ *
+ * Consumers' `cardMarker.hover` then resolves through the package's
+ * `BearbonesMarkerRuntime<Id>` type to a specific literal, which is a member
+ * of `keyof Conditions` — letting `[cardMarker.hover]: ...` narrow correctly
+ * inside object literals without forcing TypeScript to widen to a string
+ * index signature.
+ */
+function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]): string {
+  if (markers.length === 0) return "";
+  const entries = markers
+    .map((marker) => {
+      const fields = [
+        `      readonly anchor: ${JSON.stringify(marker.anchorClass)};`,
+        ...MARKER_STATES.map((state) => {
+          const conditionName = `_marker${capitalize(state)}_${marker.suffix}`;
+          return `      readonly ${state}: ${JSON.stringify(conditionName)};`;
+        }),
+      ];
+      return `    ${JSON.stringify(marker.id)}: {\n${fields.join("\n")}\n    };`;
+    })
+    .join("\n");
+
+  return [
+    "",
+    "",
+    "// --- Marker registry: emitted by @bearbones/vite codegen:prepare ---",
+    "// One entry per marker discovered by the prescan. Augments the empty",
+    "// `BearbonesMarkerRegistry` interface in the bearbones package so",
+    "// `marker(id)` returns a shape with literal-string condition keys.",
+    "declare module 'bearbones' {",
+    "  interface BearbonesMarkerRegistry {",
+    entries,
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**

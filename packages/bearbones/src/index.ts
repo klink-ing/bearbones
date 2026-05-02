@@ -62,6 +62,17 @@ export function cx(...args: Array<string | false | null | undefined>): string {
  * transform (e.g., an SSR runtime that didn't pre-build), this fallback
  * implementation throws. That's the loudest possible signal that the build
  * pipeline isn't wired correctly.
+ *
+ * The return type goes through `BearbonesMarkerRuntime<Id>`, which prefers
+ * the project-specific entry from `BearbonesMarkerRegistry` (populated by
+ * `@bearbones/vite`'s `codegen:prepare` hook from the prescan output) and
+ * falls back to a wide template-literal shape for unregistered ids.
+ *
+ * The registered entry uses *literal* strings for every condition key
+ * (`hover: '_markerHover_card_a27adb16'`), which lets `[cardMarker.hover]`
+ * narrow to a specific `keyof Conditions` member at call sites — avoiding
+ * the index-signature widening that template literals cause when used as
+ * computed keys alongside other static keys.
  */
 export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
   throw new Error(
@@ -71,7 +82,33 @@ export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
   );
 }
 
-export interface BearbonesMarkerRuntime<Id extends string = string> {
+/**
+ * Project-specific marker registry. Augmented at codegen time by
+ * `@bearbones/vite` via a `declare module 'bearbones'` block emitted into
+ * the patched `styled-system/css/css.d.ts`. The augmentation lists every
+ * `marker(...)` declaration discovered during the prescan and assigns
+ * literal-string condition keys derived from that marker's hashed suffix.
+ *
+ * The interface starts empty here so the package builds cleanly in
+ * isolation; consumer projects pick up the populated version once their
+ * Panda codegen has run.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmented per-project
+export interface BearbonesMarkerRegistry {}
+
+/**
+ * Public alias for the resolved marker shape. Looks up the project-specific
+ * entry first, then falls back to the wide template-literal default for
+ * unregistered ids (e.g., during the first dev-server render before
+ * `panda codegen` has run, or for marker declarations whose containing
+ * file isn't in Panda's `include` glob).
+ */
+export type BearbonesMarkerRuntime<Id extends string = string> =
+  Id extends keyof BearbonesMarkerRegistry
+    ? BearbonesMarkerRegistry[Id]
+    : DefaultBearbonesMarker<Id>;
+
+export interface DefaultBearbonesMarker<Id extends string = string> {
   readonly anchor: string;
   readonly hover: `_markerHover_${Id}_${string}`;
   readonly focus: `_markerFocus_${Id}_${string}`;
