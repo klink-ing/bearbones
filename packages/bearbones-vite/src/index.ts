@@ -36,9 +36,57 @@
  *   });
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import { transform } from "./transform.ts";
 import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
-import { populateUtilityMapFromTokens } from "./utility-map.ts";
+import {
+  hydrateUtilityMap,
+  populateUtilityMapFromTokens,
+  serializeUtilityMap,
+} from "./utility-map.ts";
+
+/**
+ * Cross-process hand-off path for the populated utility map.
+ *
+ * Panda's extraction runs in one process (`panda --watch`); the dev-server
+ * lowering runs in another (`vp dev`). They don't share memory, so the
+ * Panda-side `config:resolved` hook serializes the populated map to this
+ * file and the Vite-side `configResolved` hook hydrates from it. Path is
+ * relative to the project's cwd — both processes have the same cwd in any
+ * normal `vp dev` flow.
+ */
+const UTILITY_MAP_CACHE_REL_PATH = "node_modules/.cache/bearbones/utility-map.json";
+
+function utilityMapCachePath(cwd: string): string {
+  return resolvePath(cwd, UTILITY_MAP_CACHE_REL_PATH);
+}
+
+function writeUtilityMapCache(cwd: string): void {
+  const path = utilityMapCachePath(cwd);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, serializeUtilityMap(), "utf8");
+  } catch {
+    // Best-effort: a write failure here just means the Vite plugin won't
+    // see the map and runtime classNames will be wrong. Surfacing as a
+    // hard error blocks the entire build for what's a dev-mode optimization,
+    // so we swallow and let downstream symptoms be the signal.
+  }
+}
+
+function readUtilityMapCache(cwd: string): void {
+  const path = utilityMapCachePath(cwd);
+  try {
+    const json = readFileSync(path, "utf8");
+    hydrateUtilityMap(json);
+  } catch {
+    // Cache absent on first dev-server start before Panda has run, or in a
+    // production-only build that didn't go through Panda at all. The
+    // transform will pass utility strings through unchanged until Panda
+    // populates the cache.
+  }
+}
 
 export interface BearbonesHooksOptions {
   /**
@@ -76,6 +124,11 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
       // the actual tokens available in the project — no manual scale arrays.
       populateUtilityMapFromTokens(config.theme?.tokens);
+      // Write the populated map to the cross-process cache so the Vite
+      // plugin (running in a separate `vp dev` process) can hydrate from
+      // the same vocabulary.
+      const cwd = (config.cwd as string | undefined) ?? process.cwd();
+      writeUtilityMapCache(cwd);
     },
     "parser:before": ({
       filePath,
@@ -121,16 +174,31 @@ export interface BearbonesVitePluginOptions {
 export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): {
   name: string;
   enforce: "pre";
+  configResolved: (config: { root: string }) => void;
   transform: (code: string, id: string) => { code: string; map: null } | null;
 } {
+  let cwd = process.cwd();
+  let hydrated = false;
   return {
     name: "bearbones",
     // Run before other plugins so the lowered source is what react/jsx and
     // panda's own Vite plugin see.
     enforce: "pre",
+    configResolved(config: { root: string }) {
+      cwd = config.root;
+      readUtilityMapCache(cwd);
+      hydrated = true;
+    },
     transform(code: string, id: string) {
       // Vite passes the file's full URL/path; ignore non-source-file ids.
       if (!/\.(?:tsx?|jsx?|mts|cts|mtsx?|ctsx?)$/.test(id)) return null;
+      // First-transform fallback: if `panda --watch` started after
+      // `vp dev`'s `configResolved` ran, the cache file may not have
+      // existed yet. Try once on first transform call.
+      if (!hydrated) {
+        readUtilityMapCache(cwd);
+        hydrated = true;
+      }
       const result = transform({ filePath: id, source: code });
       if (result.content === undefined) return null;
       return { code: result.content, map: null };
@@ -139,7 +207,13 @@ export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): 
 }
 
 // Re-export internal pieces that the test suite consumes.
-export { listUtilities, populateUtilityMapFromTokens } from "./utility-map.ts";
+export {
+  hydrateUtilityMap,
+  listUtilities,
+  populateUtilityMapFromTokens,
+  serializeUtilityMap,
+} from "./utility-map.ts";
+export { transform } from "./transform.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
 export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
 export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
