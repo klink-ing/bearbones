@@ -1,4 +1,4 @@
-import { marker } from "bearbones";
+import { marker } from "../styled-system/css";
 
 // Module-level marker declarations. The `@bearbones/vite` parser:before hook
 // rewrites each `marker(...)` call to a synthesized object literal at build

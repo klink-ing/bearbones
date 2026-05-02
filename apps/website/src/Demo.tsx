@@ -6,9 +6,8 @@
 // The bearbones `codegen:prepare` hook patches Panda's emitted `css.d.ts` so
 // `css()` accepts utility strings + marker condition keys natively — no cast
 // needed at the call site.
-import { css } from "../styled-system/css";
-import { cx } from "bearbones";
-import { cardMarker, rowMarker } from "./markers.ts";
+import { css, cx } from "../styled-system/css";
+import { cardMarker, innerMarker, rowMarker } from "./markers.ts";
 
 export function Demo() {
   return (
@@ -78,22 +77,53 @@ export function Demo() {
         condition keys at build time; prescan registers the (modifier,
         relation) pairs so Panda's extractor emits matching CSS.
       */}
-      <article className={cx(css("p-4", "rounded-md", "bg-gray-100"), cardMarker.anchor)}>
-        <p
-          className={css("text-sm", {
+      <article
+        className={cx(
+          cardMarker.anchor,
+          css("p-4", "rounded-md", "bg-gray-100", {
             // Underscore form: explicit `.is.<relation>` against a known state.
-            [cardMarker._focusVisible.is.descendant]: "text-blue-500",
-          })}
+            [innerMarker._focusVisible.is.descendant]: "bg-blue-500",
+          }),
+        )}
+      >
+        <label className={cx("flag-error", css("text-sm"))}>
+          When this input receives :focus-visible, the cards background turns blue and the next
+          paragraph text turns white.
+          <input
+            type="text"
+            className={cx(
+              innerMarker.anchor,
+              css("border-black", {
+                borderWidth: 1,
+                _focusVisible: {
+                  outlineWidth: "1px",
+                  outlineColor: "blue.500",
+                },
+              }),
+            )}
+          />
+        </label>
+        <p
+          className={cx(
+            css({
+              [cardMarker("& > *").is.descendant]: "text-red-500",
+              // ['&:has(.flag-error)']: "text-red-500",
+              borderWidth: 1,
+            }),
+          )}
         >
-          Tab here — when this paragraph receives :focus-visible (descendant relation), the
-          card-marker ancestor's text turns blue.
+          Mixing a marker computed-key with a sibling CSS property in one object now type-checks —
+          relation types are concrete literal templates, so TS keeps the computed key as a named
+          property instead of widening to a string index signature.
         </p>
         <p
-          className={css("text-sm", {
-            // Call form: arbitrary CSS-fragment modifier.
-            [cardMarker(":has(.flag-error)").is.ancestor]: "text-red-500",
-          })}
-          tabIndex={0}
+          className={cx(
+            css("text-sm", {
+              // Call form: arbitrary CSS-fragment modifier.
+              [cardMarker("&:has(*:focus-visible)").is.ancestor]: "text-white",
+              [cardMarker("&:has(.flag-error)").is.ancestor]: "text-red-500",
+            }),
+          )}
         >
           Adding `.flag-error` anywhere inside the card flips this line red via `:has(...)`.
         </p>

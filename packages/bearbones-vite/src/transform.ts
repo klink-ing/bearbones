@@ -3,15 +3,13 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import { resolveUtility, type StyleFragment } from "./utility-map.ts";
+import { getCondition, listConditionsWithAnchor } from "./conditions-stash.ts";
 import {
   MARKER_RELATIONS,
-  MARKER_STATES,
-  STATE_PSEUDO,
   buildRelationSelector,
   describeMarker,
   type MarkerDescriptor,
   type MarkerRelation,
-  type MarkerState,
 } from "./marker-registry.ts";
 
 /**
@@ -19,15 +17,16 @@ import {
  *
  * Responsibilities:
  *   1. Find every `marker('id')` call at module scope and register it. We
- *      rewrite the call site to a synthesized callable-record so the runtime
+ *      rewrite the call site to a synthesized callable record so the runtime
  *      sees a typed value matching the `BearbonesMarker<Id>` interface — both
- *      the property shortcuts and the `(modifier).is.<relation>` chain.
- *   2. Find every `css(...)` call (only the local `css` binding from
- *      `bearbones`) and lower utility-string and condition-object arguments
- *      into Panda's native object form. Inside the object form, computed keys
- *      `[<binding>.<shortcut>]`, `[<binding>(LITERAL).is.<relation>]`, and
- *      `[<binding>._<state>.is.<relation>]` are lowered to literal Panda
- *      condition names so the extractor sees a static object.
+ *      the property shortcuts and the `(condValue).is.<relation>` chain.
+ *   2. Find every `css(...)` / `cva(...)` / `sva(...)` call (only local
+ *      bindings imported from `styled-system/css` or `styled-system/recipes`)
+ *      and lower utility-string and condition-object arguments into Panda's
+ *      native object form. Inside the object form, computed keys
+ *      `[<binding>(LITERAL).is.<relation>]` and `[<binding>._<name>.is.<relation>]`
+ *      are lowered to literal Panda raw selectors so the extractor sees a
+ *      static object.
  *   3. Emit a transformed source string. Panda's extractor then parses the
  *      transformed source as if it were authored that way.
  *
@@ -38,9 +37,6 @@ import {
  *   - `cva`/`sva` arguments accept the same input shapes; their `base` and
  *     each variant arm are recursively lowered.
  *   - `cx()` is left alone — it's a clsx-style runtime joiner per the spec.
- *
- * The transform is designed so that adding new utility names means appending
- * to the utility-map; the AST traversal does not need to change.
  */
 
 interface ImportBindings {
@@ -68,19 +64,11 @@ function emptyBindings(): ImportBindings {
 /**
  * Determine if an import source resolves to a bearbones-relevant binding.
  *
- * MVP recognizes:
- *   - `'bearbones'` itself — exposes marker, cx, and (future) css/cva/sva
- *     re-exports.
- *   - Panda's styled-system codegen output — `'../styled-system/css'`,
- *     `'./styled-system/recipes'`, etc. The path varies per project layout
- *     so we accept any path ending in `styled-system/css|recipes|jsx`.
- *
- * Future work: emit a virtual module from the bearbones facade so users can
- * always write `import { css } from 'bearbones'`, and the host paths become
- * an implementation detail.
+ * Both `css` and `marker` come from `styled-system/css`; `cva`/`sva` come
+ * from `styled-system/recipes`. The path varies per project layout so we
+ * accept any path ending in `styled-system/css|recipes|jsx`.
  */
 function isStyledSystemSource(source: string): "css" | "recipes" | null {
-  if (source === "bearbones") return null; // handled separately
   if (/styled-system\/css(\.\w+)?$/.test(source)) return "css";
   if (/styled-system\/recipes(\.\w+)?$/.test(source)) return "recipes";
   return null;
@@ -99,13 +87,10 @@ function trackReBindings(ast: any, bindings: ImportBindings): void {
     for (const declarator of node.declarations) {
       if (declarator.id.type !== "Identifier") continue;
       if (!declarator.init) continue;
-      // Strip a `... as T` cast wrapper so we see through it.
       let init = declarator.init;
       while (init.type === "TSAsExpression" || init.type === "TSTypeAssertion") {
         init = init.expression;
       }
-      // Allow chained casts: `_css as unknown as LooseCss` parses as
-      // ((_css as unknown) as LooseCss). The loop above handles both.
       if (init.type !== "Identifier") continue;
       const sourceName = init.name;
       const localName = declarator.id.name;
@@ -122,20 +107,17 @@ function findBearbonesImports(ast: any): ImportBindings {
     if (node.type !== "ImportDeclaration") continue;
     const source = node.source.value;
     const styledSystemKind = isStyledSystemSource(source);
-    if (source !== "bearbones" && styledSystemKind === null) continue;
+    if (styledSystemKind === null) continue;
     for (const spec of node.specifiers) {
       if (spec.type !== "ImportSpecifier") continue;
       const imported = spec.imported.name;
       const local = spec.local.name;
-      // Imports from styled-system/css expose only `css`. Imports from
-      // styled-system/recipes expose `cva` and `sva`. Imports from
-      // 'bearbones' expose marker + cx (and, when re-export wiring is done,
-      // the others).
-      if (imported === "css") bindings.css.add(local);
-      else if (imported === "cva") bindings.cva.add(local);
-      else if (imported === "sva") bindings.sva.add(local);
-      else if (imported === "marker" && source === "bearbones") {
-        bindings.marker.add(local);
+      if (styledSystemKind === "css") {
+        if (imported === "css") bindings.css.add(local);
+        else if (imported === "marker") bindings.marker.add(local);
+      } else if (styledSystemKind === "recipes") {
+        if (imported === "cva") bindings.cva.add(local);
+        else if (imported === "sva") bindings.sva.add(local);
       }
     }
   }
@@ -156,7 +138,6 @@ function lowerArgument(node: any, markers: MarkerCallContext): StyleFragment | n
     return lowerObject(node, markers);
   }
   if (node.type === "ArrayExpression") {
-    // Used inside `cva` arms — array of utility strings or mixed.
     const merged: StyleFragment = {};
     for (const el of node.elements) {
       if (el == null) continue;
@@ -171,8 +152,8 @@ function lowerArgument(node: any, markers: MarkerCallContext): StyleFragment | n
 /**
  * Lower an object literal into a Panda style fragment. Keys may be:
  *   - A static key name (`_hover`, `padding`) — passed through.
- *   - A computed `[marker(LITERAL).is.<relation>]` or `[marker._<state>.is.<relation>]`
- *     key — rewritten to the registered relational condition name.
+ *   - A computed `[marker(LITERAL).is.<relation>]` or `[marker._<name>.is.<relation>]`
+ *     key — rewritten to the registered relational raw selector.
  */
 function lowerObject(node: any, markers: MarkerCallContext): StyleFragment | null {
   const out: StyleFragment = {};
@@ -193,14 +174,11 @@ function resolveKey(prop: any, markers: MarkerCallContext): string | null {
     if (prop.key.type === "StringLiteral") return prop.key.value;
     return null;
   }
-  // Computed key: only the relational chain shapes are recognized. The legacy
-  // `[marker.<state>]` shortcut form was removed in favor of the explicit
-  // `[marker._<state>.is.<relation>]` builder.
   return resolveRelationalKey(prop.key, markers);
 }
 
 /**
- * Match `<binding>(LITERAL).is.<relation>` and `<binding>._<state>.is.<relation>`
+ * Match `<binding>(LITERAL).is.<relation>` and `<binding>._<name>.is.<relation>`
  * computed keys. Returns the *raw selector string* Panda will treat as a
  * parent-/self-/combinator-nesting selector, or `null` if the key isn't one
  * of the recognized relational chain shapes.
@@ -221,34 +199,37 @@ function resolveRelationalKey(node: any, markers: MarkerCallContext): string | n
 
   const inner = middle.object;
   let bindingName: string | null = null;
-  let modifier: string | null = null;
+  let condValue: string | null = null;
 
   if (inner?.type === "CallExpression") {
     if (inner.callee.type !== "Identifier") return null;
     bindingName = inner.callee.name;
-    modifier = literalStringArg(inner.arguments[0]);
+    condValue = literalStringArg(inner.arguments[0]);
   } else if (inner?.type === "MemberExpression" && !inner.computed) {
     if (inner.object.type !== "Identifier") return null;
     bindingName = inner.object.name;
     if (inner.property.type !== "Identifier") return null;
     const propName = inner.property.name as string;
     if (!propName.startsWith("_")) return null;
-    const stateName = propName.slice(1);
-    if (!isValidState(stateName)) return null;
-    modifier = STATE_PSEUDO[stateName];
+    const condName = propName.slice(1);
+    const looked = getCondition(condName);
+    if (looked === undefined) {
+      throw new Error(
+        `bearbones: marker._${condName} references an unregistered condition. ` +
+          `Either declare it under \`conditions\` in panda.config.ts or use the ` +
+          `call form \`marker('<value>')\` directly.`,
+      );
+    }
+    condValue = looked;
   } else {
     return null;
   }
 
-  if (bindingName == null || modifier == null) return null;
+  if (bindingName == null || condValue == null) return null;
   const marker = markers.byBinding(bindingName);
   if (!marker) return null;
 
-  return buildRelationSelector(marker.anchorClass, modifier, relation);
-}
-
-function isValidState(name: string): name is MarkerState {
-  return (MARKER_STATES as readonly string[]).includes(name);
+  return buildRelationSelector(marker.anchorClass, condValue, relation);
 }
 
 function isValidRelation(name: string): name is MarkerRelation {
@@ -266,8 +247,6 @@ function literalStringArg(arg: any): string | null {
 
 function lowerValue(node: any, markers: MarkerCallContext): unknown {
   if (node.type === "StringLiteral") {
-    // A bare utility string used as a value of a condition key, e.g.
-    // `{ _hover: 'bg-blue-500' }` → resolves to a single fragment.
     const fragment = resolveUtility(node.value);
     if (fragment) return fragment;
     return node.value;
@@ -276,7 +255,6 @@ function lowerValue(node: any, markers: MarkerCallContext): unknown {
   if (node.type === "BooleanLiteral") return node.value;
   if (node.type === "NullLiteral") return null;
   if (node.type === "ArrayExpression") {
-    // Array of utility strings under a condition.
     const merged: StyleFragment = {};
     for (const el of node.elements) {
       if (el == null) continue;
@@ -323,12 +301,6 @@ function deepAssign(target: StyleFragment, source: StyleFragment): void {
  * Per-call binding context: which `marker(...)` declarations are visible at
  * each call site. Includes both local declarations and imports from other
  * files (which get pre-resolved by reading the imported source on demand).
- *
- * Pre-reading the imported file is necessary because Panda calls
- * `parser:before` once per file and doesn't guarantee processing order — a
- * consumer of `cardMarker` may be parsed before its declaring module. The
- * cache is per-context (per file), not global; nothing here outlives a
- * single transform pass.
  */
 class MarkerCallContext {
   private readonly bindings = new Map<string, MarkerDescriptor>();
@@ -346,7 +318,6 @@ class MarkerCallContext {
   byBinding(localName: string): MarkerDescriptor | undefined {
     const cached = this.bindings.get(localName);
     if (cached) return cached;
-    // Look up cross-file imports lazily.
     const sourcePath = this.imports.get(localName);
     if (!sourcePath) return undefined;
     const fromImport = resolveImportedMarker(sourcePath, localName);
@@ -362,10 +333,8 @@ class MarkerCallContext {
  * Read an imported file, scan it for the `marker()` declaration matching
  * `bindingName`, and return a `MarkerDescriptor` derived from `(id, path)`.
  *
- * This is best-effort and intentionally loose: if the file can't be read, or
- * doesn't contain the expected declaration, we silently return undefined and
- * leave the call site untouched. The downstream Panda extractor will simply
- * skip the unrecognized key.
+ * Best-effort and intentionally loose: if the file can't be read, or doesn't
+ * contain the expected declaration, we silently return undefined.
  */
 function resolveImportedMarker(
   absolutePath: string,
@@ -413,16 +382,11 @@ function resolveImportedMarker(
 /**
  * Resolve an import specifier (`./markers.ts`, `../foo/bar`) to the absolute
  * path of the imported file, relative to the importing file.
- *
- * MVP: only supports relative imports. Bare specifiers (e.g.
- * `'@bearbones/preset'`) are ignored — they aren't where marker declarations
- * live in practice.
  */
 function resolveRelativeImport(fromFile: string, specifier: string): string | undefined {
   if (!specifier.startsWith(".")) return undefined;
   const base = dirname(fromFile);
   const candidate = resolvePath(base, specifier);
-  // Try the candidate as-is, plus common TS extensions, before giving up.
   const tries = [
     candidate,
     `${candidate}.ts`,
@@ -443,14 +407,13 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
 
 /**
  * Discover top-level `const x = marker('id')` declarations. Each becomes a
- * binding the call-site lowering can resolve when it sees `[x._<state>.is.<rel>]`
- * computed keys.
+ * binding the call-site lowering can resolve when it sees `[x._<name>.is.<rel>]`
+ * or `[x(LITERAL).is.<rel>]` computed keys.
  *
  * For each declaration, we also rewrite the right-hand side to a synthesized
- * callable record carrying the marker's anchor class, the typed `_<state>`
- * builders, and a tiny IIFE that handles `(modifier).is.<relation>` chains at
- * runtime. Inline FNV-1a keeps build-side and runtime modifier hashes aligned
- * without a shared bundle import.
+ * callable record carrying the marker's anchor class, the typed `_<name>`
+ * builders (one per registered condition), and a tiny IIFE that handles
+ * `(condValue).is.<relation>` chains at runtime.
  */
 function processMarkerDeclarations(
   ast: any,
@@ -461,9 +424,6 @@ function processMarkerDeclarations(
   const ctx = new MarkerCallContext();
   let needsRelationsHelper = false;
 
-  // Track every relative import so when we see a `[binding.state]` computed
-  // key in this file, we know which source file to consult for the
-  // declaration.
   for (const node of ast.program.body) {
     if (node.type !== "ImportDeclaration") continue;
     const spec = node.source.value;
@@ -493,8 +453,6 @@ function processMarkerDeclarations(
       const descriptor = describeMarker(id, modulePath);
       ctx.bind(declarator.id.name, descriptor);
 
-      // Rewrite the call to a synthesized record literal so the runtime
-      // doesn't need a real `marker()` implementation.
       const replacement = renderMarkerRecord(descriptor);
       source.overwrite(declarator.init.start, declarator.init.end, replacement);
       needsRelationsHelper = true;
@@ -505,39 +463,37 @@ function processMarkerDeclarations(
 
 /**
  * Inline runtime helper. Composes the three raw-selector strings for a
- * `(modifier, anchorClass)` pair so variable-bound chains (e.g.
- * `const k = m(':sel').is.ancestor`) work at runtime. The composition is
- * byte-for-byte identical to `buildRelationSelector` in `marker-registry.ts`
- * — Panda accepts the resulting strings as parent-/self-/combinator-nesting
- * selectors directly.
+ * `(condValue, anchorClass)` pair so variable-bound chains (e.g.
+ * `const k = m('&:hover').is.ancestor`) work at runtime. Substitutes every
+ * `&` in the input with the marker's anchor selector, then wraps in the
+ * relation. Byte-for-byte identical to `buildRelationSelector` in
+ * `marker-registry.ts`.
  *
  * Emitted once per file that declares any marker. The synthesized marker
  * record closes over this constant via a normal lexical reference.
  */
 const RELATIONS_HELPER_NAME = "__bearbones_relations";
-const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, a) => {
-  const x = "." + a + m;
-  return { is: { ancestor: x + " &", descendant: "&:has(" + x + ")", sibling: "& ~ " + x + ", " + x + " ~ &" } };
+const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (c, a) => {
+  const m = c.split("&").join("." + a);
+  return { is: { ancestor: m + " &", descendant: "&:has(" + m + ")", sibling: "& ~ " + m + ", " + m + " ~ &" } };
 };`;
 
 function renderMarkerRecord(marker: MarkerDescriptor): string {
-  const fields: string[] = [
-    `anchor: ${JSON.stringify(marker.anchorClass)}`,
-    // Underscore builder forms baked in as literal raw selectors. The inlined
-    // helper below produces the same strings for the call form, so both paths
-    // agree byte-for-byte.
-    ...MARKER_STATES.map((state) => {
-      const modifier = STATE_PSEUDO[state];
-      const ancestor = buildRelationSelector(marker.anchorClass, modifier, "ancestor");
-      const descendant = buildRelationSelector(marker.anchorClass, modifier, "descendant");
-      const sibling = buildRelationSelector(marker.anchorClass, modifier, "sibling");
-      return `_${state}: { is: { ancestor: ${JSON.stringify(ancestor)}, descendant: ${JSON.stringify(descendant)}, sibling: ${JSON.stringify(sibling)} } }`;
-    }),
-  ];
-  // Object.assign(fn, { ...props }) — the function half handles the
-  // `(modifier).is.<relation>` call form, the assigned properties cover the
-  // anchor class and the `_<state>.is.<relation>` underscore builders.
-  return `Object.assign((m) => ${RELATIONS_HELPER_NAME}(m, ${JSON.stringify(marker.anchorClass)}), { ${fields.join(", ")} })`;
+  const fields: string[] = [`anchor: ${JSON.stringify(marker.anchorClass)}`];
+  // Bake in `_<name>` shortcut for every condition whose value contains `&`.
+  // The stash is pre-populated from preset-base at module load and replaced
+  // with the host project's resolved conditions during `config:resolved` —
+  // by the time `parser:before` runs (where this transform fires), the stash
+  // reflects the user's full vocabulary including any extensions.
+  for (const { name, value } of listConditionsWithAnchor()) {
+    const ancestor = buildRelationSelector(marker.anchorClass, value, "ancestor");
+    const descendant = buildRelationSelector(marker.anchorClass, value, "descendant");
+    const sibling = buildRelationSelector(marker.anchorClass, value, "sibling");
+    fields.push(
+      `_${name}: { is: { ancestor: ${JSON.stringify(ancestor)}, descendant: ${JSON.stringify(descendant)}, sibling: ${JSON.stringify(sibling)} } }`,
+    );
+  }
+  return `Object.assign((c) => ${RELATIONS_HELPER_NAME}(c, ${JSON.stringify(marker.anchorClass)}), { ${fields.join(", ")} })`;
 }
 
 /**
@@ -573,10 +529,6 @@ function renderObject(fragment: StyleFragment): string {
   return JSON.stringify(fragment);
 }
 
-/**
- * Tiny depth-first walker. Avoids pulling in @babel/traverse, which is heavy
- * and has its own deps. We only need to visit every node once.
- */
 function walk(node: any, visit: (n: any) => void): void {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
@@ -601,10 +553,9 @@ export interface TransformResult {
 }
 
 export function transform(input: TransformInput): TransformResult {
-  // Cheap early-exit: if the file references neither our package nor the
-  // styled-system entry points, there's nothing for us to do. Saves a Babel
-  // parse on most files in a typical project.
-  if (!input.source.includes("bearbones") && !input.source.includes("styled-system")) {
+  // Cheap early-exit: if the file references styled-system not at all, we
+  // have nothing to lower. Saves a Babel parse on most files.
+  if (!input.source.includes("styled-system")) {
     return { content: undefined };
   }
 
@@ -617,7 +568,6 @@ export function transform(input: TransformInput): TransformResult {
       ranges: true,
     });
   } catch {
-    // Files we can't parse (e.g. weird syntax) are passed through.
     return { content: undefined };
   }
 
@@ -631,7 +581,6 @@ export function transform(input: TransformInput): TransformResult {
     return { content: undefined };
   }
 
-  // Follow simple top-level re-bindings: `const css = _css as ...`.
   trackReBindings(ast, bindings);
 
   const ms = new MagicString(input.source);
@@ -644,10 +593,6 @@ export function transform(input: TransformInput): TransformResult {
   processCalls(ast, bindings, ms, markers);
 
   if (needsRelationsHelper) {
-    // Prepend the helper. The transform's argument-lowering pass produces
-    // static condition strings inside `css({})` calls, but variable bindings
-    // of `<binding>(sel).is.<rel>` (and runtime evaluation in general) need
-    // the helper to compute matching condition names.
     ms.prepend(`${RELATIONS_HELPER_SOURCE}\n`);
   }
 

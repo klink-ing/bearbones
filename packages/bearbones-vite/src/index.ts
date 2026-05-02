@@ -45,47 +45,54 @@ import {
   populateUtilityMapFromTokens,
   serializeUtilityMap,
 } from "./utility-map.ts";
+import { hydrateConditions, serializeConditions, setConditions } from "./conditions-stash.ts";
 
 /**
- * Cross-process hand-off path for the populated utility map.
+ * Cross-process hand-off paths.
  *
  * Panda's extraction runs in one process (`panda --watch`); the dev-server
  * lowering runs in another (`vp dev`). They don't share memory, so the
- * Panda-side `config:resolved` hook serializes the populated map to this
- * file and the Vite-side `configResolved` hook hydrates from it. Path is
- * relative to the project's cwd — both processes have the same cwd in any
- * normal `vp dev` flow.
+ * Panda-side `config:resolved` hook serializes the populated maps to these
+ * files and the Vite-side `configResolved` hook hydrates from them.
  */
 const UTILITY_MAP_CACHE_REL_PATH = "node_modules/.cache/bearbones/utility-map.json";
+const CONDITIONS_CACHE_REL_PATH = "node_modules/.cache/bearbones/conditions.json";
 
-function utilityMapCachePath(cwd: string): string {
-  return resolvePath(cwd, UTILITY_MAP_CACHE_REL_PATH);
+function cachePath(cwd: string, rel: string): string {
+  return resolvePath(cwd, rel);
 }
 
-function writeUtilityMapCache(cwd: string): void {
-  const path = utilityMapCachePath(cwd);
+function writeCache(cwd: string, rel: string, contents: string): void {
+  const path = cachePath(cwd, rel);
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, serializeUtilityMap(), "utf8");
+    writeFileSync(path, contents, "utf8");
   } catch {
     // Best-effort: a write failure here just means the Vite plugin won't
-    // see the map and runtime classNames will be wrong. Surfacing as a
-    // hard error blocks the entire build for what's a dev-mode optimization,
-    // so we swallow and let downstream symptoms be the signal.
+    // see the map and runtime behavior will degrade. Surfacing as a hard
+    // error blocks the entire build for what's a dev-mode optimization, so
+    // we swallow and let downstream symptoms be the signal.
   }
 }
 
-function readUtilityMapCache(cwd: string): void {
-  const path = utilityMapCachePath(cwd);
+function readCache(cwd: string, rel: string, hydrate: (json: string) => void): void {
+  const path = cachePath(cwd, rel);
   try {
     const json = readFileSync(path, "utf8");
-    hydrateUtilityMap(json);
+    hydrate(json);
   } catch {
-    // Cache absent on first dev-server start before Panda has run, or in a
-    // production-only build that didn't go through Panda at all. The
-    // transform will pass utility strings through unchanged until Panda
-    // populates the cache.
+    // Cache absent on first dev-server start before Panda has run.
   }
+}
+
+function writeBuildCaches(cwd: string): void {
+  writeCache(cwd, UTILITY_MAP_CACHE_REL_PATH, serializeUtilityMap());
+  writeCache(cwd, CONDITIONS_CACHE_REL_PATH, serializeConditions());
+}
+
+function readBuildCaches(cwd: string): void {
+  readCache(cwd, UTILITY_MAP_CACHE_REL_PATH, hydrateUtilityMap);
+  readCache(cwd, CONDITIONS_CACHE_REL_PATH, hydrateConditions);
 }
 
 export interface BearbonesHooksOptions {
@@ -124,11 +131,19 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
       // the actual tokens available in the project — no manual scale arrays.
       populateUtilityMapFromTokens(config.theme?.tokens);
-      // Write the populated map to the cross-process cache so the Vite
-      // plugin (running in a separate `vp dev` process) can hydrate from
-      // the same vocabulary.
+      // Stash the resolved Panda conditions. The transform's relational
+      // marker chains read property-form values (`m._hover`, `m._dark`,
+      // `m._myCustomCond`) from this stash, and the codegen-patch
+      // enumerates `_<name>` shortcuts on `BearbonesMarker<Id>` from the
+      // same source.
+      if (config.conditions && typeof config.conditions === "object") {
+        setConditions(config.conditions as Record<string, unknown>);
+      }
+      // Write populated maps to cross-process caches so the Vite plugin
+      // (running in a separate `vp dev` process) can hydrate from the same
+      // vocabulary.
       const cwd = (config.cwd as string | undefined) ?? process.cwd();
-      writeUtilityMapCache(cwd);
+      writeBuildCaches(cwd);
     },
     "parser:before": ({
       filePath,
@@ -186,7 +201,7 @@ export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): 
     enforce: "pre",
     configResolved(config: { root: string }) {
       cwd = config.root;
-      readUtilityMapCache(cwd);
+      readBuildCaches(cwd);
       hydrated = true;
     },
     transform(code: string, id: string) {
@@ -196,7 +211,7 @@ export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): 
       // `vp dev`'s `configResolved` ran, the cache file may not have
       // existed yet. Try once on first transform call.
       if (!hydrated) {
-        readUtilityMapCache(cwd);
+        readBuildCaches(cwd);
         hydrated = true;
       }
       const result = transform({ filePath: id, source: code });
@@ -213,9 +228,15 @@ export {
   populateUtilityMapFromTokens,
   serializeUtilityMap,
 } from "./utility-map.ts";
+export {
+  hydrateConditions,
+  serializeConditions,
+  setConditions,
+  listConditionsWithAnchor,
+} from "./conditions-stash.ts";
 export { transform } from "./transform.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
-export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
+export { patchCssArtifact, patchCssRuntime, patchArtifacts } from "./codegen-patch.ts";
 export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
 
 // NOTE: `BearbonesUtilityName` is no longer re-exported as a static type.

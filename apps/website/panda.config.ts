@@ -5,7 +5,10 @@ import { bearbonesHooks } from "@bearbones/vite";
 export default defineConfig({
   preflight: true,
   include: ["./src/**/*.{ts,tsx}"],
-  exclude: [],
+  // Type-only tests author dummy `css()` calls solely to exercise the
+  // augmented `css()` typing surface — they're never executed and shouldn't
+  // contribute classes to the production stylesheet. Skip them at extraction.
+  exclude: ["./src/__type-tests__/**/*"],
   outdir: "styled-system",
   jsxFramework: "react",
   // We don't list presets explicitly because Panda's defaults
