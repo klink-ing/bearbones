@@ -56,25 +56,18 @@ export function cx(...args: Array<string | false | null | undefined>): string {
 /**
  * Runtime shape returned from `marker(...)` after the transform rewrites the
  * call site. Useful only as a TypeScript type — at runtime, the transform
- * replaces every `marker('id')` call with a synthesized object literal.
+ * replaces every `marker('id')` call with a synthesized callable record.
  *
- * If a consumer somehow imports `marker` directly without running through the
- * transform (e.g., an SSR runtime that didn't pre-build), this fallback
+ * If a consumer somehow imports `marker` directly without running through
+ * the transform (e.g., an SSR runtime that didn't pre-build), this fallback
  * implementation throws. That's the loudest possible signal that the build
  * pipeline isn't wired correctly.
  *
- * The return type goes through `BearbonesMarkerRuntime<Id>`, which prefers
- * the project-specific entry from `BearbonesMarkerRegistry` (populated by
- * `@bearbones/vite`'s `codegen:prepare` hook from the prescan output) and
- * falls back to a wide template-literal shape for unregistered ids.
- *
- * The registered entry uses *literal* strings for every condition key
- * (`hover: '_markerHover_card_a27adb16'`), which lets `[cardMarker.hover]`
- * narrow to a specific `keyof Conditions` member at call sites — avoiding
- * the index-signature widening that template literals cause when used as
- * computed keys alongside other static keys.
+ * Each shape position uses template-literal types parameterized over `Id`
+ * — narrow enough to satisfy Panda's `AnySelector` (`${string}&` |
+ * `&${string}`) for relational keys, with no per-marker codegen needed.
  */
-export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
+export function marker<Id extends string>(_id: Id): BearbonesMarker<Id> {
   throw new Error(
     "bearbones: marker() was called at runtime. " +
       "This usually means the @bearbones/vite transform did not run before this module. " +
@@ -83,38 +76,47 @@ export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
 }
 
 /**
- * Project-specific marker registry. Augmented at codegen time by
- * `@bearbones/vite` via a `declare module 'bearbones'` block emitted into
- * the patched `styled-system/css/css.d.ts`. The augmentation lists every
- * `marker(...)` declaration discovered during the prescan and assigns
- * literal-string condition keys derived from that marker's hashed suffix.
+ * The relational builder returned from a marker call (`m(':sel')`) or an
+ * underscore shortcut (`m._hover`). `.is.<relation>` resolves to a *raw CSS
+ * selector string* anchored at the marker's `bearbones-marker-<suffix>`
+ * class. Panda's `parseCondition` recognizes the result as parent-/self-/
+ * combinator-nesting and emits CSS for it without any condition having to
+ * be pre-registered.
  *
- * The interface starts empty here so the package builds cleanly in
- * isolation; consumer projects pick up the populated version once their
- * Panda codegen has run.
+ * Each variant matches Panda's `AnySelector` template-literal types
+ * (`${string}&` | `&${string}`), so the result is accepted as a computed
+ * key in `BearbonesNestedObject<P>`'s `[K in AnySelector]` branch.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: augmented per-project
-export interface BearbonesMarkerRegistry {}
+export interface BearbonesMarkerBuilder<Id extends string> {
+  readonly is: {
+    readonly ancestor: `.bearbones-marker-${Id}_${string} &`;
+    readonly descendant: `&:has(.bearbones-marker-${Id}_${string})`;
+    // Sibling is comma-joined and ordered to start with `&` so the string
+    // matches Panda's `AnySelector` (`&${string}`). Order of selectors in a
+    // CSS comma-list is irrelevant to the emitted rule.
+    readonly sibling: `& ~ .bearbones-marker-${Id}_${string}, .bearbones-marker-${Id}_${string} ~ &`;
+  };
+}
 
-/**
- * Public alias for the resolved marker shape. Looks up the project-specific
- * entry first, then falls back to the wide template-literal default for
- * unregistered ids (e.g., during the first dev-server render before
- * `panda codegen` has run, or for marker declarations whose containing
- * file isn't in Panda's `include` glob).
- */
-export type BearbonesMarkerRuntime<Id extends string = string> =
-  Id extends keyof BearbonesMarkerRegistry
-    ? BearbonesMarkerRegistry[Id]
-    : DefaultBearbonesMarker<Id>;
-
-export interface DefaultBearbonesMarker<Id extends string = string> {
-  readonly anchor: string;
-  readonly hover: `_markerHover_${Id}_${string}`;
-  readonly focus: `_markerFocus_${Id}_${string}`;
-  readonly active: `_markerActive_${Id}_${string}`;
-  readonly focusVisible: `_markerFocusVisible_${Id}_${string}`;
-  readonly disabled: `_markerDisabled_${Id}_${string}`;
+export interface BearbonesMarker<Id extends string = string> {
+  readonly anchor: `bearbones-marker-${Id}_${string}`;
+  // Underscore builder form: each yields an `.is.{ancestor,descendant,sibling}`
+  // chain that lets consumers pick the relation explicitly. Equivalent to
+  // calling the marker with the matching `STATE_PSEUDO[state]` selector.
+  readonly _hover: BearbonesMarkerBuilder<Id>;
+  readonly _focus: BearbonesMarkerBuilder<Id>;
+  readonly _active: BearbonesMarkerBuilder<Id>;
+  readonly _focusVisible: BearbonesMarkerBuilder<Id>;
+  readonly _disabled: BearbonesMarkerBuilder<Id>;
+  /**
+   * Call form: pass an arbitrary CSS-fragment modifier (e.g. `:has(.error)`,
+   * `[data-state=open]`, `:focus-within`) and pick a relation via `.is`.
+   * The `@bearbones/vite` transform requires the modifier to be a string
+   * literal at the call site so it can compose the raw selector at build
+   * time; dynamic strings still work at runtime but won't be statically
+   * extracted.
+   */
+  (selector: string): BearbonesMarkerBuilder<Id>;
 }
 
 // Note: `BearbonesUtilityName` is no longer re-exported from this package.

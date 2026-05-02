@@ -1,46 +1,36 @@
 import { createHash } from "node:crypto";
+import { preset as pandaPreset } from "@pandacss/preset-base";
 
 /**
- * The global marker registry tracks every `marker(<id>)` declaration discovered
- * during the parser:before pass across the codebase.
+ * Pure helpers used by the lowering transform to compose marker anchors and
+ * relational raw selectors. There is no module-scoped state — `marker(id)`
+ * declarations don't need to be "registered" anywhere; the transform derives
+ * everything it needs (suffix, anchor class, raw selector) deterministically
+ * from `(id, modulePath)` on demand.
  *
- * A marker's identity is the (id, modulePath) pair: distinct files declaring
- * `marker('card')` get distinct hashed condition names, so two unrelated
- * components don't accidentally share a marker.
- *
- * The registry survives across files within a single Panda build because Panda
- * invokes `parser:before` once per file, but the same hooks instance is reused
- * for the whole build. This lets us:
- *   1. Discover markers during the parser pass.
- *   2. Surface their conditions through `config:resolved` (which runs before
- *      any parsing, so markers discovered earlier are already registered when
- *      the next file is parsed).
- *
- * MVP simplification: markers are registered eagerly the first time they are
- * seen, but Panda's `config:resolved` hook only fires once at startup. To
- * sidestep this for the spike, we use a hardcoded list of standard marker
- * states and pre-register all five for every marker as soon as it's seen. A
- * more sophisticated codegen-based registration is tracked in the spec.
+ * That deterministic derivation is the whole reason this module exists.
+ * Anything that needs a stable build-time identity for `(id, modulePath)`
+ * — the synthesized record's anchor class, cross-file lookups in the
+ * transform — calls into here and gets the same answer every time.
  */
 
-export interface RegisteredMarker {
+export interface MarkerDescriptor {
   /** The literal id passed to `marker(...)`. */
   readonly id: string;
-  /** The module path where the declaration lives. Used for the hash. */
+  /** The module path of the declaring file. */
   readonly modulePath: string;
-  /** Module-scoped hash; combined with id to make the condition suffix. */
+  /** Module-scoped 8-hex SHA1 hash of `(id, modulePath)`. */
   readonly hash: string;
-  /** Suffix applied to all condition names for this marker. */
+  /** Suffix applied to the anchor class (`bearbones-marker-<suffix>`). */
   readonly suffix: string;
-  /** The class the parent applies to itself. */
+  /** The class the parent applies to itself for relational anchoring. */
   readonly anchorClass: string;
 }
 
-const MARKERS = new Map<string, RegisteredMarker>();
-
 /**
- * Standard set of states each declared marker registers as conditions.
- * Mirrors the `BearbonesMarker<Id>` interface in the design spec.
+ * Standard set of pseudo-states each marker exposes as a typed `_<state>`
+ * builder shortcut on the synthesized record. The shortcut is equivalent to
+ * calling the marker with the matching `STATE_PSEUDO[state]` selector.
  */
 export const MARKER_STATES = ["hover", "focus", "focusVisible", "active", "disabled"] as const;
 
@@ -48,82 +38,109 @@ export type MarkerState = (typeof MARKER_STATES)[number];
 
 /**
  * Map a state name to the CSS pseudo-class that selects it on the anchor.
- * Mirrors the selectors Panda's preset-base uses for `_groupHover` etc., so
- * the resulting rules feel consistent with Panda's defaults.
+ *
+ * Sourced live from `@pandacss/preset-base` so our `_<state>` shortcut
+ * selectors match Panda's built-in `_hover` / `_focus` / etc. exactly. If
+ * Panda widens any of these (e.g. recently `disabled` gained `[disabled]`
+ * and `[aria-disabled=true]`), we pick that up automatically on the next
+ * Panda upgrade. The leading `&` placeholder Panda uses is stripped — we
+ * concatenate the result onto the anchor class instead.
  */
-const STATE_PSEUDO: Record<MarkerState, string> = {
-  hover: ":is(:hover, [data-hover])",
-  focus: ":is(:focus, [data-focus])",
-  focusVisible: ":focus-visible",
-  active: ":is(:active, [data-active])",
-  disabled: ":is(:disabled, [data-disabled])",
-};
+export const STATE_PSEUDO: Record<MarkerState, string> = readPandaStatePseudos();
 
+function readPandaStatePseudos(): Record<MarkerState, string> {
+  const conditions = (pandaPreset as { conditions?: Record<string, unknown> }).conditions;
+  if (!conditions || typeof conditions !== "object") {
+    throw new Error(
+      "bearbones: @pandacss/preset-base.preset.conditions is missing. " +
+        "If Panda restructured its preset shape, update marker-registry.ts to mirror.",
+    );
+  }
+  const out = {} as Record<MarkerState, string>;
+  for (const state of MARKER_STATES) {
+    const sel = conditions[state];
+    if (typeof sel !== "string") {
+      throw new Error(
+        `bearbones: expected @pandacss/preset-base to define condition "${state}". ` +
+          "If Panda renamed or removed it, update MARKER_STATES in marker-registry.ts.",
+      );
+    }
+    out[state] = stripAnchorPrefix(sel);
+  }
+  return out;
+}
+
+/**
+ * Panda's preset stores conditions with a leading `&` selector — `&:is(...)`,
+ * `&:focus-visible`, etc. We concatenate onto the anchor class itself
+ * (`.bearbones-marker-<suffix>`) so the leading `&` has to go.
+ */
+function stripAnchorPrefix(selector: string): string {
+  return selector.startsWith("&") ? selector.slice(1) : selector;
+}
+
+export type MarkerRelation = "ancestor" | "descendant" | "sibling";
+
+export const MARKER_RELATIONS: readonly MarkerRelation[] = ["ancestor", "descendant", "sibling"];
+
+/**
+ * Build-time SHA1-based hash for marker suffixes. Browser-safe is not a
+ * requirement: the `(id, modulePath)` pair is only meaningful during the
+ * build, and the hash output is baked into the synthesized marker record as
+ * a literal.
+ */
 function shortHash(input: string): string {
-  // 8 hex chars is sufficient to avoid collisions across realistic codebases
-  // and keeps the generated class names short.
   return createHash("sha1").update(input).digest("hex").slice(0, 8);
 }
 
-function key(id: string, modulePath: string): string {
-  return `${id}::${modulePath}`;
-}
-
-export function registerMarker(id: string, modulePath: string): RegisteredMarker {
-  const k = key(id, modulePath);
-  const cached = MARKERS.get(k);
-  if (cached) return cached;
-  const hash = shortHash(k);
+/**
+ * Compose a marker descriptor from `(id, modulePath)`. Pure function — no
+ * caching, no global state. Callers that want to amortize the SHA1 hash
+ * across many lookups can wrap this in their own `Map`.
+ */
+export function describeMarker(id: string, modulePath: string): MarkerDescriptor {
+  const hash = shortHash(`${id}::${modulePath}`);
   const suffix = `${id}_${hash}`;
-  const registered: RegisteredMarker = {
+  return {
     id,
     modulePath,
     hash,
     suffix,
     anchorClass: `bearbones-marker-${suffix}`,
   };
-  MARKERS.set(k, registered);
-  return registered;
-}
-
-export function listMarkers(): readonly RegisteredMarker[] {
-  return Array.from(MARKERS.values());
 }
 
 /**
- * Build the conditions object Panda expects from the current registered
- * markers. Called by the `config:resolved` hook so every discovered marker is
- * available to the extractor.
+ * Compose the raw CSS selector for a `(modifier, relation)` pair anchored at
+ * `anchorClass`. Pure — same inputs, same output. Used by both the build-time
+ * lowering and the runtime helper baked into the synthesized marker record,
+ * so they produce identical strings.
  *
- * Limitation noted in the spec: markers discovered during a build (after
- * `config:resolved` already ran) are registered with conditions that exist
- * "after the fact". The CSS extractor honors them because Panda re-resolves
- * conditions on each `parser:after`. For the MVP, the integration test
- * verifies this works end-to-end; a more rigorous codegen-driven registration
- * is future work.
+ * Selectors:
+ *   ancestor   — `<anchor><modifier> &`
+ *   descendant — `&:has(<anchor><modifier>)`
+ *   sibling    — `& ~ <anchor><modifier>, <anchor><modifier> ~ &`
+ *
+ * Sibling is comma-emitted starting with `&` so the resulting string matches
+ * Panda's `AnySelector` (`&${string}`) on the type side. Ordering of
+ * comma-joined selectors is irrelevant to emitted CSS.
+ *
+ * All three match Panda's `parseCondition` at runtime (`endsWith(" &")`,
+ * `startsWith("&")`, `includes("&")`), so Panda treats them as raw selectors
+ * at extraction time without any condition having to be pre-registered.
  */
-export function buildMarkerConditions(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const marker of MARKERS.values()) {
-    for (const state of MARKER_STATES) {
-      // Panda registers conditions WITHOUT leading underscores; the underscore
-      // is added at lookup time when consumers write `_<name>` in css() calls.
-      // Mismatching this strips the rule from the output silently.
-      const conditionName = `marker${capitalize(state)}_${marker.suffix}`;
-      const pseudo = STATE_PSEUDO[state];
-      out[conditionName] = `.${marker.anchorClass}${pseudo} &`;
-    }
+export function buildRelationSelector(
+  anchorClass: string,
+  modifier: string,
+  relation: MarkerRelation,
+): string {
+  const anchor = `.${anchorClass}${modifier}`;
+  switch (relation) {
+    case "ancestor":
+      return `${anchor} &`;
+    case "descendant":
+      return `&:has(${anchor})`;
+    case "sibling":
+      return `& ~ ${anchor}, ${anchor} ~ &`;
   }
-  return out;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-/**
- * Reset the registry. Used between tests; not part of the public surface.
- */
-export function __resetRegistry(): void {
-  MARKERS.clear();
 }

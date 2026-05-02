@@ -26,14 +26,14 @@ export function Demo() {
       >
         <h2
           className={css("text-lg", "font-bold", {
-            [cardMarker.hover]: "text-blue-500",
+            [cardMarker._hover.is.ancestor]: "text-blue-500",
           })}
         >
           Card title
         </h2>
         <p
           className={css("text-sm", "text-gray-500", {
-            [cardMarker.hover]: "text-gray-700",
+            [cardMarker._hover.is.ancestor]: "text-gray-700",
           })}
         >
           Hover the card to see both lines change colour.
@@ -45,8 +45,8 @@ export function Demo() {
         <article className={cx(css("p-4", "rounded-md", "bg-white"), cardMarker.anchor)}>
           <span
             className={css("text-sm", {
-              [rowMarker.hover]: "text-blue-500",
-              [cardMarker.hover]: "text-red-500",
+              [rowMarker._hover.is.ancestor]: "text-blue-500",
+              [cardMarker._hover.is.ancestor]: "text-red-500",
             })}
           >
             Hovers respond to either ancestor independently.
@@ -72,6 +72,32 @@ export function Demo() {
       >
         hover background color should be blue
       </div>
+
+      {/*
+        StyleX-style `when` chains. Both shapes lower to literal Panda
+        condition keys at build time; prescan registers the (modifier,
+        relation) pairs so Panda's extractor emits matching CSS.
+      */}
+      <article className={cx(css("p-4", "rounded-md", "bg-gray-100"), cardMarker.anchor)}>
+        <p
+          className={css("text-sm", {
+            // Underscore form: explicit `.is.<relation>` against a known state.
+            [cardMarker._focusVisible.is.descendant]: "text-blue-500",
+          })}
+        >
+          Tab here — when this paragraph receives :focus-visible (descendant relation), the
+          card-marker ancestor's text turns blue.
+        </p>
+        <p
+          className={css("text-sm", {
+            // Call form: arbitrary CSS-fragment modifier.
+            [cardMarker(":has(.flag-error)").is.ancestor]: "text-red-500",
+          })}
+          tabIndex={0}
+        >
+          Adding `.flag-error` anywhere inside the card flips this line red via `:has(...)`.
+        </p>
+      </article>
     </main>
   );
 }

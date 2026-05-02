@@ -29,16 +29,27 @@ css({ _hover: ["bg-blue-500", "text-white"] });
 // Nested Panda style object under a condition (recursion preserves Panda).
 css({ _hover: { padding: "8" } });
 
-// Bearbones marker condition key (already in Panda's Conditions interface
-// via `bearbonesPreset().conditions` + the prescan). Accepts a utility
-// string directly.
-css({ [cardMarker.hover]: "text-blue-500" });
+// Bearbones marker relational condition key — typed shortcut form. The
+// `_hover` builder yields `.is.{ancestor,descendant,sibling}`; each lands as
+// a literal condition key registered by the prescan into Panda's Conditions
+// interface.
+css({ [cardMarker._hover.is.ancestor]: "text-blue-500" });
 
 // Utility string under an arbitrary nested selector.
 css({ "&:focus-within": "p-4" });
 
 // Array of utility strings under an arbitrary nested selector.
 css({ "&:focus-within": ["p-4", "bg-blue-500"] });
+
+// Marker call form: arbitrary CSS-fragment modifier with explicit relation.
+css({ [cardMarker(":has(.flag-error)").is.ancestor]: "text-red-500" });
+
+// Marker underscore form: typed shortcut against a known pseudo-state with
+// explicit relation.
+css({ [cardMarker._focusVisible.is.descendant]: "text-blue-500" });
+
+// Sibling relation works too.
+css({ [cardMarker(":focus-within").is.sibling]: "text-gray-700" });
 
 // --- Rejected forms -----------------------------------------------------
 

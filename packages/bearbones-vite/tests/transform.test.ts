@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import { transform } from "../src/transform.ts";
-import { __resetRegistry, listMarkers } from "../src/marker-registry.ts";
 import { populateUtilityMapFromTokens } from "../src/utility-map.ts";
 
 // Minimal token tree exercising the same shapes Panda emits. Just enough to
@@ -29,7 +28,6 @@ const MOCK_TOKENS = {
 };
 
 beforeEach(() => {
-  __resetRegistry();
   populateUtilityMapFromTokens(MOCK_TOKENS);
 });
 
@@ -79,7 +77,7 @@ export const x = css({ _hover: ["bg-blue-500", "text-white"] });
     expect(result.content).toContain('"_hover":{"bg":"blue.500","color":"white"}');
   });
 
-  it("rewrites marker() declarations to a frozen literal", () => {
+  it("rewrites marker() declarations to a callable record", () => {
     const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
@@ -89,11 +87,13 @@ export const cardMarker = marker("card");
     });
     expect(result.content).toBeDefined();
     expect(result.content).toContain('anchor: "bearbones-marker-card_');
-    expect(result.content).toContain('hover: "_markerHover_card_');
+    expect(result.content).toMatch(
+      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+    );
   });
 
-  it("registers markers in the global registry", () => {
-    transform({
+  it("rewrites both markers in a multi-marker file with deterministic suffixes", () => {
+    const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
 import { marker } from "bearbones";
@@ -101,8 +101,11 @@ export const cardMarker = marker("card");
 export const rowMarker = marker("row");
       `.trim(),
     });
-    const ids = listMarkers().map((m) => m.id);
-    expect(ids).toEqual(expect.arrayContaining(["card", "row"]));
+    expect(result.content).toBeDefined();
+    // Each marker call site replaced with a synthesized record carrying its
+    // own anchor class, derived purely from `(id, modulePath)`.
+    expect(result.content).toMatch(/anchor: "bearbones-marker-card_[0-9a-f]{8}"/);
+    expect(result.content).toMatch(/anchor: "bearbones-marker-row_[0-9a-f]{8}"/);
   });
 
   it("rejects dynamic marker ids at build time", () => {
@@ -135,12 +138,14 @@ export const cardMarker = marker("card");
       source: `
 import { css } from "../styled-system/css";
 import { cardMarker } from "./markers.ts";
-export const x = css({ [cardMarker.hover]: "bg-blue-500" });
+export const x = css({ [cardMarker._hover.is.ancestor]: "bg-blue-500" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
-    // The computed key should resolve to the registered condition name.
-    expect(result.content).toMatch(/"_markerHover_card_[0-9a-f]{8}":\{"bg":"blue\.500"\}/);
+    // The computed key should resolve to the composed raw selector.
+    expect(result.content).toMatch(
+      /"\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &":\{"bg":"blue\.500"\}/,
+    );
   });
 
   it("passes through files with no bearbones imports unchanged", () => {
@@ -161,5 +166,121 @@ export const x = css("flex");
       `.trim(),
     });
     expect(result.content).toContain('css({"display":"flex"})');
+  });
+});
+
+describe("transform — relational marker chains", () => {
+  it("synthesizes a callable marker record with the relations helper", () => {
+    const result = transform({
+      filePath: "/virtual/markers.ts",
+      source: `
+import { marker } from "bearbones";
+export const cardMarker = marker("card");
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    // Helper is prepended once per file.
+    expect(result.content).toContain("__bearbones_relations");
+    // Synthesized record uses Object.assign to wrap the call form + the
+    // typed `_<state>` builder properties. Function half delegates to the
+    // helper with the marker's anchor class.
+    expect(result.content).toMatch(
+      /Object\.assign\(\(m\) => __bearbones_relations\(m, "bearbones-marker-card_/,
+    );
+    // Underscore builder forms are emitted with literal raw-selector strings.
+    expect(result.content).toMatch(
+      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+    );
+    // No legacy condition-name string lurking on the record.
+    expect(result.content).not.toMatch(/hover: "_markerHover_card_/);
+    expect(result.content).not.toMatch(/_marker_card_[0-9a-f]{8}_ancestor_/);
+  });
+
+  it("lowers marker(LITERAL).is.ancestor to a raw selector key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("container");
+export const x = css({ [m(":has(.error)").is.ancestor]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"\.bearbones-marker-container_[0-9a-f]{8}:has\(\.error\) &":\{"p":"4"\}/,
+    );
+  });
+
+  it("lowers marker._<state>.is.descendant to a `&:has(...)` raw selector key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("panel");
+export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"&:has\(\.bearbones-marker-panel_[0-9a-f]{8}:is\(:focus-visible, \[data-focus-visible\]\)\)":\{"p":"4"\}/,
+    );
+  });
+
+  it("lowers .is.sibling to the comma-joined raw selector form", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("group");
+export const x = css({ [m(":focus-within").is.sibling]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"& ~ \.bearbones-marker-group_[0-9a-f]{8}:focus-within, \.bearbones-marker-group_[0-9a-f]{8}:focus-within ~ &":\{"p":"4"\}/,
+    );
+  });
+
+  it("derives the same anchor suffix for a marker used in declaration + chain in one file", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const widgetMarker = marker("widget");
+export const x = css({
+  [widgetMarker(":has(.error)").is.ancestor]: "p-4",
+});
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    // Pull the suffix out of the synthesized record's anchor field and assert
+    // the chain's lowered selector uses the same one.
+    const anchorMatch = result.content!.match(/anchor: "bearbones-marker-widget_([0-9a-f]{8})"/);
+    expect(anchorMatch).not.toBeNull();
+    const suffix = anchorMatch![1];
+    expect(result.content).toContain(
+      `".bearbones-marker-widget_${suffix}:has(.error) &":{"p":"4"}`,
+    );
+  });
+
+  it("leaves the chain untouched when modifier is dynamic", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css } from "../styled-system/css";
+import { marker } from "bearbones";
+const m = marker("dyn");
+const sel = ":hover";
+export const x = css({ [m(sel).is.ancestor]: "p-4" });
+      `.trim(),
+    });
+    // The css() argument can't be lowered (computed key resolves to null),
+    // so the entire object stays as authored.
+    expect(result.content).toBeDefined();
+    expect(result.content).toContain("[m(sel).is.ancestor]");
   });
 });

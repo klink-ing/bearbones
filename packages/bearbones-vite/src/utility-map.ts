@@ -227,3 +227,39 @@ export function resolveUtility(name: string): StyleFragment | undefined {
 export function listUtilities(): readonly string[] {
   return Array.from(UTILITY_MAP.keys());
 }
+
+/**
+ * Serialize the populated utility map to a JSON string. Used to share the
+ * map across processes — Panda's extraction runs in `panda --watch` while
+ * the runtime transform runs in `vp dev`. The Panda hook writes this string
+ * to a cache file; the Vite plugin reads it and hydrates the map on startup.
+ *
+ * Without this hand-off, the Vite plugin's transform would see an empty map
+ * (only the keyword seed), reject every token-driven utility string at
+ * lower-time, and ship raw `'p-4'` strings to Panda's runtime — which would
+ * then fail to produce matching atomic classNames.
+ */
+export function serializeUtilityMap(): string {
+  return JSON.stringify(Array.from(UTILITY_MAP.entries()));
+}
+
+/**
+ * Reset the map and re-populate from a JSON string previously produced by
+ * `serializeUtilityMap`. Intended for cross-process map hand-off, not for
+ * routine usage.
+ */
+export function hydrateUtilityMap(json: string): void {
+  let entries: Array<[string, StyleFragment]>;
+  try {
+    entries = JSON.parse(json) as Array<[string, StyleFragment]>;
+  } catch {
+    // Malformed cache — fall through to a keyword-only seed. The transform
+    // will pass token-driven utilities through unchanged; Panda's runtime
+    // will surface the resulting empty classNames as a visible bug.
+    return;
+  }
+  UTILITY_MAP.clear();
+  for (const [k, v] of entries) {
+    UTILITY_MAP.set(k, v);
+  }
+}

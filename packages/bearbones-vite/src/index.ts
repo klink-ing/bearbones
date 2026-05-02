@@ -36,11 +36,57 @@
  *   });
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import { transform } from "./transform.ts";
-import { buildMarkerConditions } from "./marker-registry.ts";
-import { prescanMarkers } from "./prescan.ts";
 import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
-import { populateUtilityMapFromTokens } from "./utility-map.ts";
+import {
+  hydrateUtilityMap,
+  populateUtilityMapFromTokens,
+  serializeUtilityMap,
+} from "./utility-map.ts";
+
+/**
+ * Cross-process hand-off path for the populated utility map.
+ *
+ * Panda's extraction runs in one process (`panda --watch`); the dev-server
+ * lowering runs in another (`vp dev`). They don't share memory, so the
+ * Panda-side `config:resolved` hook serializes the populated map to this
+ * file and the Vite-side `configResolved` hook hydrates from it. Path is
+ * relative to the project's cwd — both processes have the same cwd in any
+ * normal `vp dev` flow.
+ */
+const UTILITY_MAP_CACHE_REL_PATH = "node_modules/.cache/bearbones/utility-map.json";
+
+function utilityMapCachePath(cwd: string): string {
+  return resolvePath(cwd, UTILITY_MAP_CACHE_REL_PATH);
+}
+
+function writeUtilityMapCache(cwd: string): void {
+  const path = utilityMapCachePath(cwd);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, serializeUtilityMap(), "utf8");
+  } catch {
+    // Best-effort: a write failure here just means the Vite plugin won't
+    // see the map and runtime classNames will be wrong. Surfacing as a
+    // hard error blocks the entire build for what's a dev-mode optimization,
+    // so we swallow and let downstream symptoms be the signal.
+  }
+}
+
+function readUtilityMapCache(cwd: string): void {
+  const path = utilityMapCachePath(cwd);
+  try {
+    const json = readFileSync(path, "utf8");
+    hydrateUtilityMap(json);
+  } catch {
+    // Cache absent on first dev-server start before Panda has run, or in a
+    // production-only build that didn't go through Panda at all. The
+    // transform will pass utility strings through unchanged until Panda
+    // populates the cache.
+  }
+}
 
 export interface BearbonesHooksOptions {
   /**
@@ -55,16 +101,15 @@ export interface BearbonesHooksOptions {
  * Return a Panda hooks object that wires bearbones into Panda's pipeline.
  *
  * Hooks set:
- *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
- *     `cva()`, `sva()` argument shapes into Panda's native form. After this
- *     hook returns, Panda's extractor parses normalized source as if it were
- *     authored that way directly.
+ *   - `config:resolved` — populates the utility-string lookup table from the
+ *     host project's resolved Panda tokens.
  *
- *   - `config:resolved` — registers the conditions for every marker discovered
- *     so far. Because `config:resolved` fires once at startup before any
- *     parsing, this is also re-invoked through Panda's config-change
- *     mechanism on rebuilds; new markers added during a session take effect
- *     after the next parser pass completes.
+ *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
+ *     `cva()`, `sva()` argument shapes into Panda's native form. Relational
+ *     marker chains (`m(':sel').is.<rel>`, `m._<state>.is.<rel>`) are lowered
+ *     to *raw selector* keys (`.bearbones-marker-<suffix><modifier> &` etc.),
+ *     which Panda's parser recognizes natively as parent-/self-/combinator-
+ *     nesting selectors — no condition registration needed.
  *
  *   - `codegen:prepare` — patches Panda's emitted `styled-system/css/css.d.ts`
  *     in memory before it's written to disk, widening the `css()` signature
@@ -79,24 +124,11 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
       // the actual tokens available in the project — no manual scale arrays.
       populateUtilityMapFromTokens(config.theme?.tokens);
-
-      // Pre-scan every included file for `marker()` declarations so the
-      // resulting condition set is present in the config before Panda's
-      // extractor runs.
-      const cwd = config.cwd ?? process.cwd();
-      const include = (config.include as string[] | undefined) ?? [];
-      const exclude = (config.exclude as string[] | undefined) ?? [];
-      if (include.length > 0) {
-        prescanMarkers({ cwd, include, exclude });
-      }
-      const conditions = buildMarkerConditions();
-      if (Object.keys(conditions).length === 0) return;
-      // Panda's resolved config already flattened `extend` blocks before this
-      // hook fires, so merging into `extend` again wraps the conditions in a
-      // sub-object that the resolver mistakes for a nested condition group
-      // (and then crashes calling `.startsWith` on the object). Merge into
-      // the top-level conditions map instead.
-      config.conditions = { ...config.conditions, ...conditions };
+      // Write the populated map to the cross-process cache so the Vite
+      // plugin (running in a separate `vp dev` process) can hydrate from
+      // the same vocabulary.
+      const cwd = (config.cwd as string | undefined) ?? process.cwd();
+      writeUtilityMapCache(cwd);
     },
     "parser:before": ({
       filePath,
@@ -133,38 +165,40 @@ export default bearbonesHooks;
  * runtime helper.
  */
 export interface BearbonesVitePluginOptions {
-  /**
-   * Glob patterns mirrored from your Panda config's `include`. Used by the
-   * plugin's pre-scan to discover `marker()` declarations across the project
-   * before the first module is transformed. Defaults to a sensible mirror
-   * of `./src/**\/*.{ts,tsx}` if not provided.
-   */
+  // Glob options retained for API compatibility; no longer used now that the
+  // lowering transform is fully self-contained per file (no global prescan).
   include?: readonly string[];
   exclude?: readonly string[];
 }
 
-export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
+export function bearbonesVitePlugin(_options: BearbonesVitePluginOptions = {}): {
   name: string;
   enforce: "pre";
   configResolved: (config: { root: string }) => void;
   transform: (code: string, id: string) => { code: string; map: null } | null;
 } {
-  let prescanned = false;
+  let cwd = process.cwd();
+  let hydrated = false;
   return {
     name: "bearbones",
     // Run before other plugins so the lowered source is what react/jsx and
     // panda's own Vite plugin see.
     enforce: "pre",
     configResolved(config: { root: string }) {
-      if (prescanned) return;
-      prescanned = true;
-      const include = options.include ?? ["./src/**/*.{ts,tsx}"];
-      const exclude = options.exclude ?? [];
-      prescanMarkers({ cwd: config.root, include, exclude });
+      cwd = config.root;
+      readUtilityMapCache(cwd);
+      hydrated = true;
     },
     transform(code: string, id: string) {
       // Vite passes the file's full URL/path; ignore non-source-file ids.
       if (!/\.(?:tsx?|jsx?|mts|cts|mtsx?|ctsx?)$/.test(id)) return null;
+      // First-transform fallback: if `panda --watch` started after
+      // `vp dev`'s `configResolved` ran, the cache file may not have
+      // existed yet. Try once on first transform call.
+      if (!hydrated) {
+        readUtilityMapCache(cwd);
+        hydrated = true;
+      }
       const result = transform({ filePath: id, source: code });
       if (result.content === undefined) return null;
       return { code: result.content, map: null };
@@ -173,8 +207,13 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
 }
 
 // Re-export internal pieces that the test suite consumes.
-export { listMarkers } from "./marker-registry.ts";
-export { listUtilities, populateUtilityMapFromTokens } from "./utility-map.ts";
+export {
+  hydrateUtilityMap,
+  listUtilities,
+  populateUtilityMapFromTokens,
+  serializeUtilityMap,
+} from "./utility-map.ts";
+export { transform } from "./transform.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
 export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
 export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
