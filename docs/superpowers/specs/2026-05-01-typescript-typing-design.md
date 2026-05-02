@@ -31,7 +31,7 @@ Per [Panda's hook docs](https://panda-css.com/docs/concepts/hooks):
 
 > **codegen:prepare** — "Called right before writing the codegen files to disk. You can use this hook to tweak the codegen files before they are written to disk."
 
-It runs after `config:resolved` (so the prescan in [packages/bearbones-vite/src/prescan.ts](packages/bearbones-vite/src/prescan.ts) has already registered every `group()` declaration as a Panda condition) and before any source files are written. That's exactly the window we need: every condition the user will ever reference is already in Panda's resolved `Conditions`, and we can mutate the about-to-be-written types freely.
+It runs after `config:resolved` (so the prescan in [packages/bearbones-vite/src/prescan.ts](packages/bearbones-vite/src/prescan.ts) has already registered every `marker()` declaration as a Panda condition) and before any source files are written. That's exactly the window we need: every condition the user will ever reference is already in Panda's resolved `Conditions`, and we can mutate the about-to-be-written types freely.
 
 ### Why not the alternatives
 
@@ -94,7 +94,7 @@ export type BearbonesSystemStyleObject =
 type Styles = BearbonesSystemStyleObject | undefined | null | false
 ```
 
-Group condition keys (`_groupHover_card_a3f4b2c1`, etc.) are _not_ a separate template-literal type. They're already in Panda's `Conditions` interface because the bearbones preset registers them via `bearbonesPreset().conditions` and `buildGroupConditions()`. The prescan in `config:resolved` ensures every `group()` declaration is registered before Panda's codegen runs, so `Condition = keyof Conditions` naturally includes them.
+Marker condition keys (`_markerHover_card_a3f4b2c1`, etc.) are _not_ a separate template-literal type. They're already in Panda's `Conditions` interface because the bearbones preset registers them via `bearbonesPreset().conditions` and `buildMarkerConditions()`. The prescan in `config:resolved` ensures every `marker()` declaration is registered before Panda's codegen runs, so `Condition = keyof Conditions` naturally includes them.
 
 ### Behavioural diff
 
@@ -106,7 +106,7 @@ Group condition keys (`_groupHover_card_a3f4b2c1`, etc.) are _not_ a separate te
 | `css({ padding: 'p-4' })`                        | ❌                                              | ❌ — utility strings rejected as property values            |
 | `css({ _hover: ['bg-blue-500', 'text-white'] })` | ❌ array shape doesn't match                    | ✅ — condition value can be `readonly BearbonesNested<P>[]` |
 | `css({ _hover: { padding: '8' } })`              | ✅                                              | ✅ — recursion preserves Panda                              |
-| `css({ [cardGroup.hover]: 'text-blue-500' })`    | ❌ key not in `Condition` union                 | ✅ — group condition key is in `Condition` via the preset   |
+| `css({ [cardMarker.hover]: 'text-blue-500' })`   | ❌ key not in `Condition` union                 | ✅ — marker condition key is in `Condition` via the preset  |
 | `css({ '&:focus-within': 'p-4' })`               | ❌                                              | ✅ — selector value position is `BearbonesNested<P>`        |
 
 ## Components
@@ -152,11 +152,11 @@ The seven-line `TypedCss` cast block at the top of the file is deleted. The `Bea
 
 ### `packages/bearbones/src/index.ts` — type-only exports cleaned up
 
-The current re-exports of `BearbonesUtilityName`, `BearbonesStyleInput`, `BearbonesConditionObject`, `BearbonesGroupRuntime` from `bearbones` are evaluated:
+The current re-exports of `BearbonesUtilityName`, `BearbonesStyleInput`, `BearbonesConditionObject`, `BearbonesMarkerRuntime` from `bearbones` are evaluated:
 
 - `BearbonesUtilityName`: keep — useful for users who want to type a function arg as "a bearbones utility name". Source of truth stays in `@bearbones/vite/utility-map.ts`.
 - `BearbonesStyleInput`, `BearbonesConditionObject`: delete — these existed only to support the manual cast, which is gone.
-- `BearbonesGroupRuntime`: keep — the runtime shape returned from `group()`.
+- `BearbonesMarkerRuntime`: keep — the runtime shape returned from `marker()`.
 
 After deleting `BearbonesConditionObject`, also remove the now-orphaned `import type { BearbonesUtilityName }` line that fed it (currently line 92 of `packages/bearbones/src/index.ts`). The top-level `export type { BearbonesUtilityName } from "@bearbones/vite"` re-export stays.
 
@@ -183,7 +183,7 @@ css("p-4");
 css("p-4", "bg-blue-500", { padding: "8" });
 css({ _hover: ["bg-blue-500", "text-white"] });
 css({ _hover: { padding: "8" } });
-css({ [cardGroup.hover]: "text-blue-500" });
+css({ [cardMarker.hover]: "text-blue-500" });
 css({ "&:focus-within": ["p-4", "bg-blue-500"] });
 
 // @ts-expect-error — typo'd utility name
@@ -198,7 +198,7 @@ css("ypg-4");
 
 ### 3. End-to-end via the existing demo
 
-Removing the `TypedCss` cast from `Demo.tsx` and getting a clean `tsc` is itself the integration test. The demo already exercises every relevant call shape (top-level utilities, mixed object form, group conditions, `_hover` arrays).
+Removing the `TypedCss` cast from `Demo.tsx` and getting a clean `tsc` is itself the integration test. The demo already exercises every relevant call shape (top-level utilities, mixed object form, marker conditions, `_hover` arrays).
 
 ## Edge cases & risks
 
@@ -206,7 +206,7 @@ Removing the `TypedCss` cast from `Demo.tsx` and getting a clean `tsc` is itself
 
 - **Panda format drift.** If a future Panda release changes the emitted `css.d.ts` shape (renames `Styles`, restructures the file), the marker-based replacement will fail. The thrown error names the missing marker explicitly so the diagnosis is one Panda changelog read away. The unit-test fixture catches this in CI when the bearbones-vite package is rebuilt against a new Panda.
 
-- **Group conditions discovered after `config:resolved`.** The prescan handles this for the synchronous case (it walks every file in the include glob before `config:resolved` returns). If a user adds a new `group()` declaration during a dev session, Panda re-runs `config:resolved` on file change, so the new condition gets registered before the next `codegen:prepare`. Confirmed by reading [packages/bearbones-vite/src/prescan.ts](packages/bearbones-vite/src/prescan.ts) and [group-registry.ts](packages/bearbones-vite/src/group-registry.ts).
+- **Marker conditions discovered after `config:resolved`.** The prescan handles this for the synchronous case (it walks every file in the include glob before `config:resolved` returns). If a user adds a new `marker()` declaration during a dev session, Panda re-runs `config:resolved` on file change, so the new condition gets registered before the next `codegen:prepare`. Confirmed by reading [packages/bearbones-vite/src/prescan.ts](packages/bearbones-vite/src/prescan.ts) and [marker-registry.ts](packages/bearbones-vite/src/marker-registry.ts).
 
 - **Implementation prototype required for `SystemProperties` import path.** The patched type references `SystemProperties`, `GenericProperties`, `CssVarProperties`, `Selectors`, `AnySelector`, `Condition` — these all need to be importable from somewhere within the `styled-system/` tree. Verifying their actual emitted module paths (and adding any necessary `import` lines to the patched `css.d.ts`) is the first concrete step of implementation. If any of these aren't cleanly accessible, the spec gets a small revision describing what we re-emit inline.
 

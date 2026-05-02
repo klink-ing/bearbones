@@ -13,7 +13,7 @@
  */
 
 import { css } from "../../styled-system/css";
-import { cardGroup } from "../groups.ts";
+import { cardMarker } from "../markers.ts";
 
 // --- Valid forms --------------------------------------------------------
 
@@ -29,10 +29,10 @@ css({ _hover: ["bg-blue-500", "text-white"] });
 // Nested Panda style object under a condition (recursion preserves Panda).
 css({ _hover: { padding: "8" } });
 
-// Bearbones group condition key (already in Panda's Conditions interface
+// Bearbones marker condition key (already in Panda's Conditions interface
 // via `bearbonesPreset().conditions` + the prescan). Accepts a utility
 // string directly.
-css({ [cardGroup.hover]: "text-blue-500" });
+css({ [cardMarker.hover]: "text-blue-500" });
 
 // Utility string under an arbitrary nested selector.
 css({ "&:focus-within": "p-4" });

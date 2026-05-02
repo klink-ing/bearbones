@@ -4,19 +4,19 @@ import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import { resolveUtility, type StyleFragment } from "./utility-map.ts";
 import {
-  GROUP_STATES,
-  registerGroup,
-  type GroupState,
-  type RegisteredGroup,
-} from "./group-registry.ts";
+  MARKER_STATES,
+  registerMarker,
+  type MarkerState,
+  type RegisteredMarker,
+} from "./marker-registry.ts";
 
 /**
  * The lowering transform that runs in Panda's `parser:before` hook.
  *
  * Responsibilities:
- *   1. Find every `group('id')` call at module scope and register it. We
- *      rewrite the call site to `bearbones__groupRecord({...})` so the runtime
- *      sees a typed record matching the `BearbonesGroup<Id>` interface.
+ *   1. Find every `marker('id')` call at module scope and register it. We
+ *      rewrite the call site to a synthesized record literal so the runtime
+ *      sees a typed record matching the `BearbonesMarker<Id>` interface.
  *   2. Find every `css(...)` call (only the local `css` binding from
  *      `bearbones`) and lower utility-string and condition-object arguments
  *      into Panda's native object form.
@@ -45,7 +45,7 @@ interface ImportBindings {
   css: Set<string>;
   cva: Set<string>;
   sva: Set<string>;
-  group: Set<string>;
+  marker: Set<string>;
 }
 
 function emptyBindings(): ImportBindings {
@@ -53,7 +53,7 @@ function emptyBindings(): ImportBindings {
     css: new Set(),
     cva: new Set(),
     sva: new Set(),
-    group: new Set(),
+    marker: new Set(),
   };
 }
 
@@ -61,7 +61,7 @@ function emptyBindings(): ImportBindings {
  * Determine if an import source resolves to a bearbones-relevant binding.
  *
  * MVP recognizes:
- *   - `'bearbones'` itself — exposes group, cx, and (future) css/cva/sva
+ *   - `'bearbones'` itself — exposes marker, cx, and (future) css/cva/sva
  *     re-exports.
  *   - Panda's styled-system codegen output — `'../styled-system/css'`,
  *     `'./styled-system/recipes'`, etc. The path varies per project layout
@@ -83,9 +83,7 @@ function isStyledSystemSource(source: string): "css" | "recipes" | null {
  * is a tracked import binding (e.g., `_css`), bind `x` to the same role.
  *
  * This intentionally only follows simple aliases; chains of more than one
- * re-bind, function-wrapped versions, etc. are out of scope. Real consumers
- * that need wrapping should use the bearbones facade once the codegen-driven
- * type augmentation lands.
+ * re-bind, function-wrapped versions, etc. are out of scope.
  */
 function trackReBindings(ast: any, bindings: ImportBindings): void {
   for (const node of ast.program.body) {
@@ -123,13 +121,13 @@ function findBearbonesImports(ast: any): ImportBindings {
       const local = spec.local.name;
       // Imports from styled-system/css expose only `css`. Imports from
       // styled-system/recipes expose `cva` and `sva`. Imports from
-      // 'bearbones' expose group + cx (and, when re-export wiring is done,
+      // 'bearbones' expose marker + cx (and, when re-export wiring is done,
       // the others).
       if (imported === "css") bindings.css.add(local);
       else if (imported === "cva") bindings.cva.add(local);
       else if (imported === "sva") bindings.sva.add(local);
-      else if (imported === "group" && source === "bearbones") {
-        bindings.group.add(local);
+      else if (imported === "marker" && source === "bearbones") {
+        bindings.marker.add(local);
       }
     }
   }
@@ -141,20 +139,20 @@ function findBearbonesImports(ast: any): ImportBindings {
  * fragment. Returns `null` if the node isn't a shape we can statically resolve;
  * the caller then leaves it as-is.
  */
-function lowerArgument(node: any, groups: GroupCallContext): StyleFragment | null {
+function lowerArgument(node: any, markers: MarkerCallContext): StyleFragment | null {
   if (node.type === "StringLiteral") {
     const fragment = resolveUtility(node.value);
     return fragment ?? null;
   }
   if (node.type === "ObjectExpression") {
-    return lowerObject(node, groups);
+    return lowerObject(node, markers);
   }
   if (node.type === "ArrayExpression") {
     // Used inside `cva` arms — array of utility strings or mixed.
     const merged: StyleFragment = {};
     for (const el of node.elements) {
       if (el == null) continue;
-      const fragment = lowerArgument(el, groups);
+      const fragment = lowerArgument(el, markers);
       if (fragment) deepAssign(merged, fragment);
     }
     return merged;
@@ -165,29 +163,29 @@ function lowerArgument(node: any, groups: GroupCallContext): StyleFragment | nul
 /**
  * Lower an object literal into a Panda style fragment. Keys may be:
  *   - A static key name (`_hover`, `padding`) — passed through.
- *   - A computed `[group.<state>]` key — rewritten to the registered Panda
- *     condition name like `_groupHover_card_a3f4b2`.
+ *   - A computed `[marker.<state>]` key — rewritten to the registered Panda
+ *     condition name like `_markerHover_card_a3f4b2`.
  */
-function lowerObject(node: any, groups: GroupCallContext): StyleFragment | null {
+function lowerObject(node: any, markers: MarkerCallContext): StyleFragment | null {
   const out: StyleFragment = {};
   for (const prop of node.properties) {
     if (prop.type !== "ObjectProperty") return null;
-    const key = resolveKey(prop, groups);
+    const key = resolveKey(prop, markers);
     if (key == null) return null;
-    const value = lowerValue(prop.value, groups);
+    const value = lowerValue(prop.value, markers);
     if (value === undefined) return null;
     out[key] = value;
   }
   return out;
 }
 
-function resolveKey(prop: any, groups: GroupCallContext): string | null {
+function resolveKey(prop: any, markers: MarkerCallContext): string | null {
   if (!prop.computed) {
     if (prop.key.type === "Identifier") return prop.key.name;
     if (prop.key.type === "StringLiteral") return prop.key.value;
     return null;
   }
-  // Computed key: the only supported form is `[<groupBinding>.<state>]`
+  // Computed key: the only supported form is `[<markerBinding>.<state>]`
   if (
     prop.key.type === "MemberExpression" &&
     prop.key.object.type === "Identifier" &&
@@ -195,23 +193,23 @@ function resolveKey(prop: any, groups: GroupCallContext): string | null {
   ) {
     const bindingName = prop.key.object.name;
     const state = prop.key.property.name;
-    const group = groups.byBinding(bindingName);
-    if (!group) return null;
+    const marker = markers.byBinding(bindingName);
+    if (!marker) return null;
     if (!isValidState(state)) return null;
-    return `_group${capitalize(state)}_${group.suffix}`;
+    return `_marker${capitalize(state)}_${marker.suffix}`;
   }
   return null;
 }
 
-function isValidState(name: string): name is GroupState {
-  return (GROUP_STATES as readonly string[]).includes(name);
+function isValidState(name: string): name is MarkerState {
+  return (MARKER_STATES as readonly string[]).includes(name);
 }
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function lowerValue(node: any, groups: GroupCallContext): unknown {
+function lowerValue(node: any, markers: MarkerCallContext): unknown {
   if (node.type === "StringLiteral") {
     // A bare utility string used as a value of a condition key, e.g.
     // `{ _hover: 'bg-blue-500' }` → resolves to a single fragment.
@@ -231,14 +229,14 @@ function lowerValue(node: any, groups: GroupCallContext): unknown {
         const fragment = resolveUtility(el.value);
         if (fragment) Object.assign(merged, fragment);
       } else {
-        const fragment = lowerArgument(el, groups);
+        const fragment = lowerArgument(el, markers);
         if (fragment) deepAssign(merged, fragment);
       }
     }
     return merged;
   }
   if (node.type === "ObjectExpression") {
-    return lowerObject(node, groups);
+    return lowerObject(node, markers);
   }
   return undefined;
 }
@@ -267,34 +265,34 @@ function deepAssign(target: StyleFragment, source: StyleFragment): void {
 }
 
 /**
- * Per-call binding context: which `group(...)` declarations are visible at
+ * Per-call binding context: which `marker(...)` declarations are visible at
  * each call site. Includes both local declarations and imports from other
  * files (which get pre-resolved by reading the imported source on demand).
  *
  * Pre-reading the imported file is necessary because Panda calls
  * `parser:before` once per file and doesn't guarantee processing order — a
- * consumer of `cardGroup` may be parsed before its declaring module.
+ * consumer of `cardMarker` may be parsed before its declaring module.
  */
-class GroupCallContext {
-  private readonly bindings = new Map<string, RegisteredGroup>();
+class MarkerCallContext {
+  private readonly bindings = new Map<string, RegisteredMarker>();
   /** localName → absolute path of the imported file, for cross-file lookup. */
   private readonly imports = new Map<string, string>();
 
-  bind(localName: string, group: RegisteredGroup): void {
-    this.bindings.set(localName, group);
+  bind(localName: string, marker: RegisteredMarker): void {
+    this.bindings.set(localName, marker);
   }
 
   registerImport(localName: string, absolutePath: string): void {
     this.imports.set(localName, absolutePath);
   }
 
-  byBinding(localName: string): RegisteredGroup | undefined {
+  byBinding(localName: string): RegisteredMarker | undefined {
     const cached = this.bindings.get(localName);
     if (cached) return cached;
     // Look up cross-file imports lazily.
     const sourcePath = this.imports.get(localName);
     if (!sourcePath) return undefined;
-    const fromImport = resolveImportedGroup(sourcePath, localName);
+    const fromImport = resolveImportedMarker(sourcePath, localName);
     if (fromImport) {
       this.bindings.set(localName, fromImport);
       return fromImport;
@@ -304,25 +302,25 @@ class GroupCallContext {
 }
 
 /**
- * Read an imported file, scan it for `group()` declarations, and register the
- * matching binding name. Returns the registered group (cached) or undefined.
+ * Read an imported file, scan it for `marker()` declarations, and register the
+ * matching binding name. Returns the registered marker (cached) or undefined.
  *
  * This is best-effort and intentionally loose: if the file can't be read, or
  * doesn't contain the expected declaration, we silently return undefined and
  * leave the call site untouched. The downstream Panda extractor will simply
  * skip the unrecognized condition key.
  */
-function resolveImportedGroup(
+function resolveImportedMarker(
   absolutePath: string,
   bindingName: string,
-): RegisteredGroup | undefined {
+): RegisteredMarker | undefined {
   let content: string;
   try {
     content = readFileSync(absolutePath, "utf8");
   } catch {
     return undefined;
   }
-  if (!content.includes("group(")) return undefined;
+  if (!content.includes("marker(")) return undefined;
 
   let ast: any;
   try {
@@ -335,7 +333,7 @@ function resolveImportedGroup(
   }
 
   const bindings = findBearbonesImports(ast);
-  if (bindings.group.size === 0) return undefined;
+  if (bindings.marker.size === 0) return undefined;
 
   for (const node of ast.program.body) {
     const decl =
@@ -346,21 +344,21 @@ function resolveImportedGroup(
       if (declarator.id.name !== bindingName) continue;
       if (declarator.init?.type !== "CallExpression") continue;
       const callee = declarator.init.callee;
-      if (callee.type !== "Identifier" || !bindings.group.has(callee.name)) continue;
+      if (callee.type !== "Identifier" || !bindings.marker.has(callee.name)) continue;
       const arg = declarator.init.arguments[0];
       if (!arg || arg.type !== "StringLiteral") continue;
-      return registerGroup(arg.value, absolutePath);
+      return registerMarker(arg.value, absolutePath);
     }
   }
   return undefined;
 }
 
 /**
- * Resolve an import specifier (`./groups.ts`, `../foo/bar`) to the absolute
+ * Resolve an import specifier (`./markers.ts`, `../foo/bar`) to the absolute
  * path of the imported file, relative to the importing file.
  *
  * MVP: only supports relative imports. Bare specifiers (e.g.
- * `'@bearbones/preset'`) are ignored — they aren't where group declarations
+ * `'@bearbones/preset'`) are ignored — they aren't where marker declarations
  * live in practice.
  */
 function resolveRelativeImport(fromFile: string, specifier: string): string | undefined {
@@ -387,21 +385,21 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
 }
 
 /**
- * Discover top-level `const x = group('id')` declarations. Each becomes a
+ * Discover top-level `const x = marker('id')` declarations. Each becomes a
  * binding the call-site lowering can resolve when it sees `[x.hover]` keys.
  *
  * For each declaration, we also rewrite the right-hand side to a synthesized
- * object literal carrying the group's anchor class and the registered
- * condition keys — that's what the runtime `BearbonesGroup<Id>` interface
+ * object literal carrying the marker's anchor class and the registered
+ * condition keys — that's what the runtime `BearbonesMarker<Id>` interface
  * expects.
  */
-function processGroupDeclarations(
+function processMarkerDeclarations(
   ast: any,
   bindings: ImportBindings,
   modulePath: string,
   source: MagicString,
-): GroupCallContext {
-  const ctx = new GroupCallContext();
+): MarkerCallContext {
+  const ctx = new MarkerCallContext();
 
   // Track every relative import so when we see a `[binding.state]` computed
   // key in this file, we know which source file to consult for the
@@ -417,7 +415,7 @@ function processGroupDeclarations(
     }
   }
 
-  if (bindings.group.size === 0) return ctx;
+  if (bindings.marker.size === 0) return ctx;
   for (const node of ast.program.body) {
     const decl =
       node.type === "ExportNamedDeclaration" && node.declaration ? node.declaration : node;
@@ -426,28 +424,28 @@ function processGroupDeclarations(
       if (declarator.id.type !== "Identifier") continue;
       if (declarator.init?.type !== "CallExpression") continue;
       const callee = declarator.init.callee;
-      if (callee.type !== "Identifier" || !bindings.group.has(callee.name)) continue;
+      if (callee.type !== "Identifier" || !bindings.marker.has(callee.name)) continue;
       const arg = declarator.init.arguments[0];
       if (!arg || arg.type !== "StringLiteral") {
-        throw new Error(`bearbones: group() requires a literal string id at ${modulePath}`);
+        throw new Error(`bearbones: marker() requires a literal string id at ${modulePath}`);
       }
       const id = arg.value;
-      const registered = registerGroup(id, modulePath);
+      const registered = registerMarker(id, modulePath);
       ctx.bind(declarator.id.name, registered);
 
       // Rewrite the call to a synthesized record literal so the runtime
-      // doesn't need a real `group()` implementation.
-      const replacement = renderGroupRecord(registered);
+      // doesn't need a real `marker()` implementation.
+      const replacement = renderMarkerRecord(registered);
       source.overwrite(declarator.init.start, declarator.init.end, replacement);
     }
   }
   return ctx;
 }
 
-function renderGroupRecord(group: RegisteredGroup): string {
+function renderMarkerRecord(marker: RegisteredMarker): string {
   const fields = [
-    `anchor: ${JSON.stringify(group.anchorClass)}`,
-    ...GROUP_STATES.map((state) => `${state}: "_group${capitalize(state)}_${group.suffix}"`),
+    `anchor: ${JSON.stringify(marker.anchorClass)}`,
+    ...MARKER_STATES.map((state) => `${state}: "_marker${capitalize(state)}_${marker.suffix}"`),
   ];
   return `({ ${fields.join(", ")} })`;
 }
@@ -460,7 +458,7 @@ function processCalls(
   ast: any,
   bindings: ImportBindings,
   source: MagicString,
-  groups: GroupCallContext,
+  markers: MarkerCallContext,
 ): void {
   walk(ast, (node: any) => {
     if (node?.type !== "CallExpression") return;
@@ -468,14 +466,14 @@ function processCalls(
     if (callee.type !== "Identifier") return;
     const name = callee.name;
     if (bindings.css.has(name) || bindings.cva.has(name) || bindings.sva.has(name)) {
-      lowerCallArguments(node, source, groups);
+      lowerCallArguments(node, source, markers);
     }
   });
 }
 
-function lowerCallArguments(call: any, source: MagicString, groups: GroupCallContext): void {
+function lowerCallArguments(call: any, source: MagicString, markers: MarkerCallContext): void {
   for (const arg of call.arguments) {
-    const fragment = lowerArgument(arg, groups);
+    const fragment = lowerArgument(arg, markers);
     if (fragment == null) continue;
     source.overwrite(arg.start, arg.end, renderObject(fragment));
   }
@@ -538,19 +536,17 @@ export function transform(input: TransformInput): TransformResult {
     bindings.css.size === 0 &&
     bindings.cva.size === 0 &&
     bindings.sva.size === 0 &&
-    bindings.group.size === 0
+    bindings.marker.size === 0
   ) {
     return { content: undefined };
   }
 
-  // Follow simple top-level re-bindings: `const css = _css as ...`. This is a
-  // common pattern when consumers cast Panda's css() to a looser type before
-  // the codegen-driven type augmentation lands.
+  // Follow simple top-level re-bindings: `const css = _css as ...`.
   trackReBindings(ast, bindings);
 
   const ms = new MagicString(input.source);
-  const groups = processGroupDeclarations(ast, bindings, input.filePath, ms);
-  processCalls(ast, bindings, ms, groups);
+  const markers = processMarkerDeclarations(ast, bindings, input.filePath, ms);
+  processCalls(ast, bindings, ms, markers);
 
   const result = ms.toString();
   return { content: result === input.source ? undefined : result };

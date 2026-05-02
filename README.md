@@ -1,13 +1,13 @@
 # bearbones
 
 Two extensions to [PandaCSS](https://panda-css.com): Tailwind-flavored utility
-strings inside `css()`, and typed group symbols for parent-state styling.
+strings inside `css()`, and typed marker symbols for parent-state styling.
 
 Everything else — atomic extraction, conditions, tokens, recipes, the runtime
 helpers — comes from Panda unchanged.
 
 > **Status: MVP.** The two extensions work end-to-end with token resolution,
-> descendant-selector group rules, and a passing transform test suite. The
+> descendant-selector marker rules, and a passing transform test suite. The
 > utility vocabulary is narrow (single-digit families per scale) and the type
 > generator is still a skeleton. See [Follow-ups](#follow-ups).
 
@@ -31,43 +31,43 @@ The lowering happens at build time. `css('p-4')` is rewritten to
 atomic class is identical to what you'd get authoring the object form by hand —
 no runtime overhead, full type safety against typos like `'p-44'`.
 
-### 2. Typed group symbols
+### 2. Typed marker symbols
 
 Panda has `_groupHover` for parent-state styling, but the anchor is the
 `.group` class — a magic string with no type checking, and only one pool per
 DOM tree. Tailwind has named groups (`group/card`) but they're also strings,
 prone to typos and accidental collision.
 
-`bearbones` declares groups as typed module-scoped symbols:
+`bearbones` declares markers as typed module-scoped symbols:
 
 ```ts
-// groups.ts
-import { group } from "bearbones";
-export const cardGroup = group("card");
+// markers.ts
+import { marker } from "bearbones";
+export const cardMarker = marker("card");
 ```
 
 ```tsx
 // Card.tsx
-<article className={cx(css("p-4"), cardGroup.anchor)}>
-  <h2 className={css("text-lg", { [cardGroup.hover]: "text-blue-500" })}>{title}</h2>
+<article className={cx(css("p-4"), cardMarker.anchor)}>
+  <h2 className={css("text-lg", { [cardMarker.hover]: "text-blue-500" })}>{title}</h2>
 </article>
 ```
 
-The parent applies `cardGroup.anchor`. The child styles itself when _its_
-`cardGroup` ancestor is hovered. Renaming the symbol via TS rename refactor
-propagates to every consumer. Two files declaring `group('card')` get distinct
+The parent applies `cardMarker.anchor`. The child styles itself when _its_
+`cardMarker` ancestor is hovered. Renaming the symbol via TS rename refactor
+propagates to every consumer. Two files declaring `marker('card')` get distinct
 hashed condition names so they don't collide.
 
 The emitted CSS uses a descendant-selector atomic class (with `a3f4b2c1`
-standing in for the per-group hash):
+standing in for the per-marker hash):
 
 ```css
-.bearbones-group-card_a3f4b2c1:is(:hover, [data-hover]) .groupHover_card_a3f4b2c1\:c_blue\.500 {
+.bearbones-marker-card_a3f4b2c1:is(:hover, [data-hover]) .markerHover_card_a3f4b2c1\:c_blue\.500 {
   color: var(--colors-blue-500);
 }
 ```
 
-Multiple groups nest cleanly — `[rowGroup.hover]` and `[cardGroup.hover]` on
+Multiple markers nest cleanly — `[rowMarker.hover]` and `[cardMarker.hover]` on
 the same element produce two distinct atomic rules, each driven by its own
 ancestor.
 
@@ -111,7 +111,7 @@ extensions to work end-to-end.
 ```
 apps/website/             End-to-end demo + visual proof
 packages/
-  bearbones/              Public facade — cx, group, type re-exports
+  bearbones/              Public facade — cx, marker, type re-exports
   bearbones-preset/       Panda preset
   bearbones-vite/         Lowering transform + css.d.ts patcher (Panda hooks + Vite plugin)
 ```
@@ -145,5 +145,5 @@ Done:
 - ~~**Type augmentation.**~~ The demo no longer needs a `TypedCss` cast.
   `@bearbones/vite`'s `codegen:prepare` hook patches Panda's emitted
   `styled-system/css/css.d.ts` directly, widening the `css()` signature to
-  accept utility strings + group condition keys. See
+  accept utility strings + marker condition keys. See
   `packages/bearbones-vite/src/codegen-patch.ts`.

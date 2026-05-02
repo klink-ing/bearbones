@@ -3,9 +3,10 @@
  *
  * This module ships two integration points that work together:
  *
- *   1. `bearbonesHooks()` — Panda hooks (`config:resolved` + `parser:before`)
- *      that lower utility strings + group symbols when Panda extracts CSS.
- *      This is what makes the right rules appear in `styled-system/styles.css`.
+ *   1. `bearbonesHooks()` — Panda hooks (`config:resolved` + `parser:before`
+ *      + `codegen:prepare`) that lower utility strings + marker symbols when
+ *      Panda extracts CSS, and patch the emitted `css()` type signature so
+ *      the host project's `css()` import accepts utility strings natively.
  *
  *   2. `bearbonesVitePlugin()` — a Vite plugin that runs the SAME lowering
  *      on every `.ts/.tsx` file before it reaches the browser. Without this,
@@ -36,8 +37,8 @@
  */
 
 import { transform } from "./transform.ts";
-import { buildGroupConditions } from "./group-registry.ts";
-import { prescanGroups } from "./prescan.ts";
+import { buildMarkerConditions } from "./marker-registry.ts";
+import { prescanMarkers } from "./prescan.ts";
 import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
 
 export interface BearbonesHooksOptions {
@@ -53,15 +54,15 @@ export interface BearbonesHooksOptions {
  * Return a Panda hooks object that wires bearbones into Panda's pipeline.
  *
  * Hooks set:
- *   - `parser:before` — rewrites `group()` declarations and lowers `css()`,
+ *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
  *     `cva()`, `sva()` argument shapes into Panda's native form. After this
  *     hook returns, Panda's extractor parses normalized source as if it were
  *     authored that way directly.
  *
- *   - `config:resolved` — registers the conditions for every group discovered
+ *   - `config:resolved` — registers the conditions for every marker discovered
  *     so far. Because `config:resolved` fires once at startup before any
  *     parsing, this is also re-invoked through Panda's config-change
- *     mechanism on rebuilds; new groups added during a session take effect
+ *     mechanism on rebuilds; new markers added during a session take effect
  *     after the next parser pass completes.
  *
  *   - `codegen:prepare` — patches Panda's emitted `styled-system/css/css.d.ts`
@@ -72,16 +73,16 @@ export interface BearbonesHooksOptions {
 export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
   return {
     "config:resolved": ({ config }: { config: any }) => {
-      // Pre-scan every included file for `group()` declarations so the
+      // Pre-scan every included file for `marker()` declarations so the
       // resulting condition set is present in the config before Panda's
       // extractor runs.
       const cwd = config.cwd ?? process.cwd();
       const include = (config.include as string[] | undefined) ?? [];
       const exclude = (config.exclude as string[] | undefined) ?? [];
       if (include.length > 0) {
-        prescanGroups({ cwd, include, exclude });
+        prescanMarkers({ cwd, include, exclude });
       }
-      const conditions = buildGroupConditions();
+      const conditions = buildMarkerConditions();
       if (Object.keys(conditions).length === 0) return;
       // Panda's resolved config already flattened `extend` blocks before this
       // hook fires, so merging into `extend` again wraps the conditions in a
@@ -127,7 +128,7 @@ export default bearbonesHooks;
 export interface BearbonesVitePluginOptions {
   /**
    * Glob patterns mirrored from your Panda config's `include`. Used by the
-   * plugin's pre-scan to discover `group()` declarations across the project
+   * plugin's pre-scan to discover `marker()` declarations across the project
    * before the first module is transformed. Defaults to a sensible mirror
    * of `./src/**\/*.{ts,tsx}` if not provided.
    */
@@ -152,7 +153,7 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
       prescanned = true;
       const include = options.include ?? ["./src/**/*.{ts,tsx}"];
       const exclude = options.exclude ?? [];
-      prescanGroups({ cwd: config.root, include, exclude });
+      prescanMarkers({ cwd: config.root, include, exclude });
     },
     transform(code: string, id: string) {
       // Vite passes the file's full URL/path; ignore non-source-file ids.
@@ -165,7 +166,7 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
 }
 
 // Re-export internal pieces that the test suite consumes.
-export { listGroups } from "./group-registry.ts";
+export { listMarkers } from "./marker-registry.ts";
 export { listUtilities } from "./utility-map.ts";
 // Re-export the derived utility-name union so consumers (and the `bearbones`
 // facade) can use it for typing their own helpers. The closed-set version

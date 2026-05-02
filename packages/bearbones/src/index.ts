@@ -7,8 +7,9 @@
  *   - `cx`: a clsx-style class string joiner used to combine multiple class
  *     strings (the result of `css()`, recipe outputs, prop passthrough, etc.).
  *
- *   - `group`: declares a typed group symbol. Lowered by `@bearbones/vite`'s
- *     parser:before transform into an object literal at build time.
+ *   - `marker`: declares a typed marker symbol for parent-state styling.
+ *     Lowered by `@bearbones/vite`'s parser:before transform into a
+ *     synthesized object literal at build time.
  *
  *   - Type-only re-export of `BearbonesUtilityName` from `@bearbones/vite`.
  *     The actual augmentation of Panda's `css()` signature happens in
@@ -18,7 +19,7 @@
  *   - Re-exports of `css`, `cva`, `sva` from the host project's
  *     `styled-system/` directory (Panda's generated runtime). At install time
  *     a tiny shim is wired up so `import { css } from 'bearbones'` resolves
- *     to the host's `styled-system/css`. See `wireUp()` below.
+ *     to the host's `styled-system/css`.
  *
  * Note on `css()` and friends: the actual runtime functions live in the host
  * project's `styled-system/` directory (Panda's codegen output). The bearbones
@@ -29,7 +30,7 @@
  * from `styled-system/css`. Tracked in the design spec under "open questions:
  * facade rewriting.")
  *
- * The `cx` and `group` exports are full runtime implementations and ship from
+ * The `cx` and `marker` exports are full runtime implementations and ship from
  * this package without any rewriting.
  */
 
@@ -51,30 +52,30 @@ export function cx(...args: Array<string | false | null | undefined>): string {
 }
 
 /**
- * Runtime shape returned from `group(...)` after the transform rewrites the
+ * Runtime shape returned from `marker(...)` after the transform rewrites the
  * call site. Useful only as a TypeScript type — at runtime, the transform
- * replaces every `group('id')` call with a synthesized object literal.
+ * replaces every `marker('id')` call with a synthesized object literal.
  *
- * If a consumer somehow imports `group` directly without running through the
+ * If a consumer somehow imports `marker` directly without running through the
  * transform (e.g., an SSR runtime that didn't pre-build), this fallback
- * implementation returns a minimal record that throws on access. That's the
- * loudest possible signal that the build pipeline isn't wired correctly.
+ * implementation throws. That's the loudest possible signal that the build
+ * pipeline isn't wired correctly.
  */
-export function group<Id extends string>(_id: Id): BearbonesGroupRuntime<Id> {
+export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
   throw new Error(
-    "bearbones: group() was called at runtime. " +
+    "bearbones: marker() was called at runtime. " +
       "This usually means the @bearbones/vite transform did not run before this module. " +
-      "Verify Panda's hooks include bearbonesHooks() and that the file imports `group` from 'bearbones'.",
+      "Verify Panda's hooks include bearbonesHooks() and that the file imports `marker` from 'bearbones'.",
   );
 }
 
-export interface BearbonesGroupRuntime<Id extends string = string> {
+export interface BearbonesMarkerRuntime<Id extends string = string> {
   readonly anchor: string;
-  readonly hover: `_groupHover_${Id}_${string}`;
-  readonly focus: `_groupFocus_${Id}_${string}`;
-  readonly active: `_groupActive_${Id}_${string}`;
-  readonly focusVisible: `_groupFocusVisible_${Id}_${string}`;
-  readonly disabled: `_groupDisabled_${Id}_${string}`;
+  readonly hover: `_markerHover_${Id}_${string}`;
+  readonly focus: `_markerFocus_${Id}_${string}`;
+  readonly active: `_markerActive_${Id}_${string}`;
+  readonly focusVisible: `_markerFocusVisible_${Id}_${string}`;
+  readonly disabled: `_markerDisabled_${Id}_${string}`;
 }
 
 /**
