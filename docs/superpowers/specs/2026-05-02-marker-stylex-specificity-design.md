@@ -93,20 +93,15 @@ All five new shapes hit one of these. `&`-substitution itself runs through `post
 The single source of truth for relation selector shapes. The current inline `switch` ([buildRelationSelector L132–146](packages/bearbones-vite/src/marker-registry.ts:132)) is replaced by an exported lookup table near the top of the module:
 
 ```ts
-export type MarkerRelation =
-  | "ancestor"
-  | "descendant"
-  | "siblingBefore"
-  | "siblingAfter"
-  | "siblingAny";
-
 export const MARKER_RELATIONS = [
   "ancestor",
   "descendant",
   "siblingBefore",
   "siblingAfter",
   "siblingAny",
-] as const satisfies readonly MarkerRelation[];
+] as const;
+
+export type MarkerRelation = (typeof MARKER_RELATIONS)[number];
 
 /**
  * The five raw-selector shapes a marker chain compiles to. The argument is the
@@ -146,18 +141,22 @@ The function-valued table is intentional: it keeps each template a single readab
 
 Three changes, all derived from the new table:
 
-1. **Inline runtime helper.** The hand-written `RELATIONS_HELPER_SOURCE` ([transform.ts:518–521](packages/bearbones-vite/src/transform.ts:518)) is regenerated programmatically so the runtime path stays byte-identical to `buildRelationSelector`:
+1. **Inline runtime helper.** The hand-written `RELATIONS_HELPER_SOURCE` ([transform.ts:518–521](packages/bearbones-vite/src/transform.ts:518)) is regenerated from `RELATION_SELECTORS` so the runtime path stays byte-identical to `buildRelationSelector`. The constraint is firm: the runtime selector strings must be derived from the table, not duplicated. The exact stitching mechanism is an implementation choice. One option (illustrative pseudocode — not a literal snippet to copy):
 
-   ```ts
-   const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, a) => {
-     const x = "." + a + m;
-     return { is: { ${MARKER_RELATIONS.map(
-       (r) => `${r}: ${JSON.stringify(RELATION_SELECTORS[r]('" + x + "'))}`,
-     ).join(", ")} } };
-   };`;
+   ```text
+   For each relation r in MARKER_RELATIONS:
+     - Compute the template body by calling RELATION_SELECTORS[r](placeholder)
+       where `placeholder` is a unique sentinel string.
+     - Stringify the result, then split on the sentinel to extract the
+       literal-text fragments around it.
+     - Emit a runtime-evaluated string-concatenation expression that joins
+       those fragments with the live `x` variable.
+
+   Result: a runtime helper whose `is.<relation>` values are computed by
+   the same templates the build-time path uses, with no second copy.
    ```
 
-   The exact string-stitching syntax may shift during implementation (e.g., emit a small helper that `JSON.stringify`s a runtime-evaluated expression), but the constraint is firm: the runtime selector strings must be derived from `RELATION_SELECTORS`, not duplicated.
+   Implementer is free to choose any approach (e.g., a placeholder-substitution helper, or a small runtime-side function exported from `marker-registry.ts` that the helper imports) as long as the constraint above holds.
 
 2. **`renderMarkerRecord`.** The hardcoded three-relation loop ([transform.ts:529–535](packages/bearbones-vite/src/transform.ts:529)) iterates `MARKER_RELATIONS` instead, producing the `_<state>: { is: { … } }` block with all five entries.
 
@@ -179,7 +178,7 @@ export interface BearbonesMarkerBuilder<Id extends string> {
 }
 ```
 
-Each variant matches Panda's `AnySelector` (`${string}&` | `&${string}`) — the comma-joined `siblingAny` string starts with `:where(...)` not `&`, but its tail ends with `))` so it falls into `${string}&` if the ` &` substring is anywhere in it… wait, more carefully: `AnySelector` is `${string}&` | `&${string}`, both of which match any string that _contains_ `&`. The `siblingAny` shape includes ` ~ &` and `&:where(...)` so it satisfies both branches. All five variants are valid `AnySelector` keys; the chain result still drops cleanly into `BearbonesNestedObject`'s `[K in AnySelector]` branch with no patch changes elsewhere.
+Each variant contains `&`, so all five satisfy Panda's `AnySelector` constraint (`${string}&` | `&${string}`). The chain result drops cleanly into `BearbonesNestedObject`'s `[K in AnySelector]` branch with no patch changes elsewhere.
 
 ### `apps/website/src/__type-tests__/css-typing.ts`
 
@@ -199,7 +198,7 @@ Three layers, in order of how directly they exercise the production path:
 
 - Existing `ancestor`, `descendant`, `sibling` tests are rewritten against the new selector shapes. The `sibling` test is renamed to `siblingAny`.
 - New `siblingBefore` and `siblingAfter` tests assert the exact emitted strings.
-- A "specificity contract" test asserts that every selector returned by `buildRelationSelector` (across all relations and a representative modifier) contains the substring `:where(`. This is a structural proxy for the specificity guarantee — if a future edit forgets to wrap, this test fails.
+- A "specificity contract" test asserts that every selector returned by `buildRelationSelector` (across all relations and a representative modifier): (a) contains the substring `:where(`, and (b) the first occurrence of `:where(` precedes the first `&` in selectors that don't start with `&`. The first half catches a missing wrapper; the second catches the "wrap `&` instead of the marker" misplacement called out in the alternatives section. Together they're a structural proxy for the specificity guarantee — if a future edit breaks either, this test fails.
 - The `endsWith(" &")` / `startsWith("&")` Panda-compatibility test is updated to cover all five relations and document which Panda nesting type each maps to.
 
 ### 2. Unit tests for `transform.ts`
