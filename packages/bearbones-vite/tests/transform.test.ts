@@ -224,7 +224,7 @@ export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"&:has\(\.bearbones-marker-panel_[0-9a-f]{8}:focus-visible\)":\{"p":"4"\}/,
+      /"&:has\(\.bearbones-marker-panel_[0-9a-f]{8}:is\(:focus-visible, \[data-focus-visible\]\)\)":\{"p":"4"\}/,
     );
   });
 

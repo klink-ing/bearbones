@@ -129,6 +129,9 @@ importers:
       '@pandacss/dev':
         specifier: 1.10.0
         version: 1.10.0(typescript@6.0.3)
+      '@pandacss/preset-base':
+        specifier: 1.10.0
+        version: 1.10.0
       '@pandacss/types':
         specifier: 1.10.0
         version: 1.10.0

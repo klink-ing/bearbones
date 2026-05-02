@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { preset as pandaPreset } from "@pandacss/preset-base";
 
 /**
  * Pure helpers used by the lowering transform to compose marker anchors and
@@ -37,15 +38,46 @@ export type MarkerState = (typeof MARKER_STATES)[number];
 
 /**
  * Map a state name to the CSS pseudo-class that selects it on the anchor.
- * Mirrors the selectors Panda's preset-base uses for `_hover` etc.
+ *
+ * Sourced live from `@pandacss/preset-base` so our `_<state>` shortcut
+ * selectors match Panda's built-in `_hover` / `_focus` / etc. exactly. If
+ * Panda widens any of these (e.g. recently `disabled` gained `[disabled]`
+ * and `[aria-disabled=true]`), we pick that up automatically on the next
+ * Panda upgrade. The leading `&` placeholder Panda uses is stripped — we
+ * concatenate the result onto the anchor class instead.
  */
-export const STATE_PSEUDO: Record<MarkerState, string> = {
-  hover: ":is(:hover, [data-hover])",
-  focus: ":is(:focus, [data-focus])",
-  focusVisible: ":focus-visible",
-  active: ":is(:active, [data-active])",
-  disabled: ":is(:disabled, [data-disabled])",
-};
+export const STATE_PSEUDO: Record<MarkerState, string> = readPandaStatePseudos();
+
+function readPandaStatePseudos(): Record<MarkerState, string> {
+  const conditions = (pandaPreset as { conditions?: Record<string, unknown> }).conditions;
+  if (!conditions || typeof conditions !== "object") {
+    throw new Error(
+      "bearbones: @pandacss/preset-base.preset.conditions is missing. " +
+        "If Panda restructured its preset shape, update marker-registry.ts to mirror.",
+    );
+  }
+  const out = {} as Record<MarkerState, string>;
+  for (const state of MARKER_STATES) {
+    const sel = conditions[state];
+    if (typeof sel !== "string") {
+      throw new Error(
+        `bearbones: expected @pandacss/preset-base to define condition "${state}". ` +
+          "If Panda renamed or removed it, update MARKER_STATES in marker-registry.ts.",
+      );
+    }
+    out[state] = stripAnchorPrefix(sel);
+  }
+  return out;
+}
+
+/**
+ * Panda's preset stores conditions with a leading `&` selector — `&:is(...)`,
+ * `&:focus-visible`, etc. We concatenate onto the anchor class itself
+ * (`.bearbones-marker-<suffix>`) so the leading `&` has to go.
+ */
+function stripAnchorPrefix(selector: string): string {
+  return selector.startsWith("&") ? selector.slice(1) : selector;
+}
 
 export type MarkerRelation = "ancestor" | "descendant" | "sibling";
 
