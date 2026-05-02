@@ -5,77 +5,28 @@
  * fragment that produces the same atomic class. The transform uses this table
  * during `parser:before` to lower `css('p-4')` into `css({ p: 4 })`.
  *
- * Scope is intentionally narrow for MVP — only the utilities exercised by the
- * demo and snapshot tests are implemented. The pattern is designed so that
- * adding a new utility means appending to one of the generators below; the
- * transform does not change.
+ * The scale-driven entries (spacing, colors, font sizes, font weights, radii,
+ * shadows) are NOT hard-coded — they're derived from the host project's
+ * resolved Panda tokens, populated via `populateUtilityMapFromTokens()` from
+ * the `config:resolved` hook. This keeps utility shorthands automatically in
+ * sync with whatever tokens Panda ships (defaults + user preset extensions);
+ * adding a new spacing token to your Panda preset means the matching `p-X` /
+ * `m-X` / `gap-X` shorthand becomes valid without any change here.
  *
- * Future work:
- * - Generate this table from `@bearbones/preset` so the preset is the single
- *   source of truth for utility names + token references.
- * - Generate the matching `BearbonesUtilityName` type union in
- *   `@bearbones/codegen`.
+ * The fixed pieces — Tailwind prefix names (`p`, `bg`, `text`, …) and the
+ * keyword utilities (`flex`, `items-center`, `w-full`, …) — stay declared
+ * here because they're conventions, not tokens. The scale-driven slots get
+ * populated dynamically.
  */
 
 export type StyleFragment = Record<string, unknown>;
 
-// All scale arrays are exported `as const` so a matching template-literal
-// type union can be derived for `BearbonesUtilityName` without duplicating
-// the source of truth.
-export const SPACING_SCALE = [
-  "0",
-  "0.5",
-  "1",
-  "1.5",
-  "2",
-  "2.5",
-  "3",
-  "4",
-  "5",
-  "6",
-  "8",
-  "10",
-  "12",
-  "16",
-  "20",
-  "24",
-] as const;
-
-export const COLOR_FAMILIES = [
-  "slate",
-  "gray",
-  "zinc",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "blue",
-  "indigo",
-  "purple",
-  "pink",
-] as const;
-
-export const COLOR_SHADES = [
-  "50",
-  "100",
-  "200",
-  "300",
-  "400",
-  "500",
-  "600",
-  "700",
-  "800",
-  "900",
-] as const;
-
-export const FONT_SIZE_SCALE = ["xs", "sm", "base", "lg", "xl", "2xl", "3xl"] as const;
-
-export const FONT_WEIGHT_NAMES = ["thin", "light", "normal", "medium", "bold"] as const;
-
-export const RADIUS_SCALE = ["none", "sm", "md", "lg", "xl", "2xl", "full"] as const;
-
-export const SHADOW_SCALE = ["sm", "md", "lg", "xl", "2xl", "none"] as const;
-
+/**
+ * Tailwind-style spacing prefixes. Cross-product with each `spacing` token to
+ * produce the full `p-4`, `mx-2.5`, `gap-8` set. The prefix name doubles as
+ * the Panda shorthand key — `{ p: '4' }`, `{ gap: '8' }` — so the resolver
+ * picks up the spacing token type correctly.
+ */
 export const SPACING_PREFIX_NAMES = [
   "p",
   "px",
@@ -94,158 +45,169 @@ export const SPACING_PREFIX_NAMES = [
   "gap",
 ] as const;
 
+/**
+ * Tailwind-style color prefixes. The Tailwind name may differ from the Panda
+ * shorthand key (e.g. `text` → `color`); see COLOR_PREFIX_TO_PANDA_KEY below.
+ */
 export const COLOR_PREFIX_NAMES = ["bg", "text", "border"] as const;
 
-export const KEYWORD_UTILITIES = [
-  "flex",
-  "grid",
-  "block",
-  "inline",
-  "inline-block",
-  "hidden",
-  "items-start",
-  "items-center",
-  "items-end",
-  "justify-start",
-  "justify-center",
-  "justify-between",
-  "justify-end",
-  "rounded",
-  "shadow",
-  "w-full",
-  "h-full",
-  "w-screen",
-  "h-screen",
-] as const;
-
-type SpacingPrefix = (typeof SPACING_PREFIX_NAMES)[number];
-type SpacingValue = (typeof SPACING_SCALE)[number];
-type ColorPrefix = (typeof COLOR_PREFIX_NAMES)[number];
-type ColorFamily = (typeof COLOR_FAMILIES)[number];
-type ColorShade = (typeof COLOR_SHADES)[number];
-type FontSize = (typeof FONT_SIZE_SCALE)[number];
-type FontWeight = (typeof FONT_WEIGHT_NAMES)[number];
-type Radius = (typeof RADIUS_SCALE)[number];
-type Shadow = (typeof SHADOW_SCALE)[number];
+const COLOR_PREFIX_TO_PANDA_KEY: Record<(typeof COLOR_PREFIX_NAMES)[number], string> = {
+  bg: "bg",
+  text: "color",
+  border: "borderColor",
+};
 
 /**
- * The closed union of every utility-string name accepted by `css()`.
- *
- * Derived from the same constants the runtime utility map is built from, so
- * the type is guaranteed to be in sync with what the transform actually
- * recognizes. Adding a value to a scale or prefix array narrows/widens both
- * the runtime and the type at the same time.
+ * Standalone utility names that don't fit a token-driven scale. Most are
+ * direct CSS values (display, alignment); a few are convenience aliases.
  */
-export type BearbonesUtilityName =
-  | (typeof KEYWORD_UTILITIES)[number]
-  | `${SpacingPrefix}-${SpacingValue}`
-  | `${ColorPrefix}-${ColorFamily}-${ColorShade}`
-  | `${ColorPrefix}-${"white" | "black" | "transparent"}`
-  | `text-${FontSize}`
-  | `font-${FontWeight}`
-  | `rounded-${Radius}`
-  | `shadow-${Shadow}`;
+const KEYWORD_FRAGMENTS: Record<string, StyleFragment> = {
+  flex: { display: "flex" },
+  grid: { display: "grid" },
+  block: { display: "block" },
+  inline: { display: "inline" },
+  "inline-block": { display: "inline-block" },
+  hidden: { display: "none" },
+  "items-start": { alignItems: "flex-start" },
+  "items-center": { alignItems: "center" },
+  "items-end": { alignItems: "flex-end" },
+  "justify-start": { justifyContent: "flex-start" },
+  "justify-center": { justifyContent: "center" },
+  "justify-between": { justifyContent: "space-between" },
+  "justify-end": { justifyContent: "flex-end" },
+  "w-full": { width: "100%" },
+  "h-full": { height: "100%" },
+  "w-screen": { width: "100vw" },
+  "h-screen": { height: "100vh" },
+};
 
 /**
- * Build the static utility lookup table once at module load.
+ * Mutable shared map. Initialized with just the keyword utilities at module
+ * load — call `populateUtilityMapFromTokens()` (typically from Panda's
+ * `config:resolved` hook) to add the token-driven entries.
  *
- * The table is intentionally a `Map` so future work can lazily extend it
- * without rebuilding the bundle.
+ * Tests that exercise the transform directly without going through the hook
+ * pipeline should call `populateUtilityMapFromTokens()` manually with a
+ * mock token tree first.
  */
-function buildUtilityMap(): Map<string, StyleFragment> {
-  const map = new Map<string, StyleFragment>();
+const UTILITY_MAP = new Map<string, StyleFragment>();
 
-  // Standalone keywords.
-  const KEYWORDS: Record<string, StyleFragment> = {
-    flex: { display: "flex" },
-    grid: { display: "grid" },
-    block: { display: "block" },
-    inline: { display: "inline" },
-    "inline-block": { display: "inline-block" },
-    hidden: { display: "none" },
-    "items-start": { alignItems: "flex-start" },
-    "items-center": { alignItems: "center" },
-    "items-end": { alignItems: "flex-end" },
-    "justify-start": { justifyContent: "flex-start" },
-    "justify-center": { justifyContent: "center" },
-    "justify-between": { justifyContent: "space-between" },
-    "justify-end": { justifyContent: "flex-end" },
-  };
-  for (const [name, value] of Object.entries(KEYWORDS)) map.set(name, value);
-
-  // Spacing-scale utilities. Use Panda's shorthand keys so the resolver
-  // looks up the spacing token type. Writing `{ padding: '4' }` would
-  // emit a literal CSS value; `{ p: 4 }` resolves to `var(--spacing-4)`.
-  for (const prefix of SPACING_PREFIX_NAMES) {
-    for (const value of SPACING_SCALE) {
-      // Panda accepts string values for token references. Numeric strings
-      // hit the spacing scale lookup; arbitrary strings pass through.
-      map.set(`${prefix}-${value}`, { [prefix]: value });
-    }
+function seedKeywords(): void {
+  for (const [name, fragment] of Object.entries(KEYWORD_FRAGMENTS)) {
+    UTILITY_MAP.set(name, fragment);
   }
-
-  // Color-scale utilities. Same shorthand-key reasoning: `bg`/`color`/
-  // `borderColor` all opt into the colors token type via Panda's defaults.
-  // The Tailwind prefix may differ from the Panda key (e.g. `text` → `color`).
-  const COLOR_PREFIX_TO_PANDA_KEY: Record<(typeof COLOR_PREFIX_NAMES)[number], string> = {
-    bg: "bg",
-    text: "color",
-    border: "borderColor",
-  };
-  for (const tailwindPrefix of COLOR_PREFIX_NAMES) {
-    const pandaKey = COLOR_PREFIX_TO_PANDA_KEY[tailwindPrefix];
-    for (const family of COLOR_FAMILIES) {
-      for (const shade of COLOR_SHADES) {
-        // Tailwind dashes → Panda dot reference: `bg-blue-500` → `blue.500`.
-        map.set(`${tailwindPrefix}-${family}-${shade}`, {
-          [pandaKey]: `${family}.${shade}`,
-        });
-      }
-    }
-    map.set(`${tailwindPrefix}-white`, { [pandaKey]: "white" });
-    map.set(`${tailwindPrefix}-black`, { [pandaKey]: "black" });
-    map.set(`${tailwindPrefix}-transparent`, { [pandaKey]: "transparent" });
-  }
-
-  // Font sizes — `text-lg` collides with the color prefix above; the color
-  // version is `text-<color>-<shade>`, which has three segments. The font-size
-  // form has only two and a known scale name, so it disambiguates correctly.
-  for (const size of FONT_SIZE_SCALE) {
-    // `fontSize` is a recognized Panda key and resolves the `fontSizes`
-    // token scale.
-    map.set(`text-${size}`, { fontSize: size });
-  }
-
-  // Font weights — use the Panda shorthand `fontWeight` which resolves the
-  // `fontWeights` token type. The scale uses dot-notation names like
-  // `font.weights.bold`, but we map directly to the named token.
-  for (const name of FONT_WEIGHT_NAMES) {
-    map.set(`font-${name}`, { fontWeight: name });
-  }
-
-  // Border radii. `rounded` is a Panda shorthand that resolves the `radii`
-  // token type.
-  for (const value of RADIUS_SCALE) {
-    map.set(`rounded-${value}`, { rounded: value });
-  }
-  map.set("rounded", { rounded: "md" });
-
-  // Box shadows. `shadow` shorthand resolves the `shadows` token type.
-  for (const value of SHADOW_SCALE) {
-    map.set(`shadow-${value}`, { shadow: value });
-  }
-  map.set("shadow", { shadow: "sm" });
-
-  // Width / height keywords.
-  map.set("w-full", { width: "100%" });
-  map.set("h-full", { height: "100%" });
-  map.set("w-screen", { width: "100vw" });
-  map.set("h-screen", { height: "100vh" });
-
-  return map;
 }
 
-const UTILITY_MAP = buildUtilityMap();
+seedKeywords();
+
+/**
+ * Walk a Panda token tree (e.g. `tokens.spacing` or `tokens.colors`) and
+ * collect every leaf token's dotted path. A leaf is any object with a
+ * `value` field; intermediate nodes are walked recursively.
+ *
+ *   { 0: { value: '0' }, 4: { value: '1rem' } }       → ['0', '4']
+ *   { blue: { 50: { value: '...' } }, black: { value: '#000' } }
+ *                                                      → ['blue.50', 'black']
+ */
+function collectTokenPaths(node: unknown, prefix: string[] = []): string[] {
+  if (node == null || typeof node !== "object") return [];
+  // A token leaf: any object that has a `value` field. Panda tokens may carry
+  // additional metadata (description, deprecated) on the same leaf object,
+  // but `value` is the consistent marker.
+  if ("value" in (node as Record<string, unknown>)) {
+    return prefix.length === 0 ? [] : [prefix.join(".")];
+  }
+  const out: string[] = [];
+  for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+    out.push(...collectTokenPaths(child, [...prefix, key]));
+  }
+  return out;
+}
+
+/**
+ * Shape of the slice of Panda's resolved tokens we read. Matches the
+ * `Tokens` type from `@pandacss/types/tokens` structurally — we don't import
+ * it because it would drag pkg-types into the bundle (see codegen-patch.ts
+ * for the same reasoning around Artifact).
+ */
+export interface PandaTokens {
+  spacing?: unknown;
+  colors?: unknown;
+  fontSizes?: unknown;
+  fontWeights?: unknown;
+  radii?: unknown;
+  shadows?: unknown;
+}
+
+/**
+ * Build the token-driven utility entries from a resolved Panda token tree.
+ * Idempotent: clears the previous map (preserving the keyword seed) and
+ * re-populates from scratch, so calling this multiple times during a
+ * dev-server session keeps the map in sync with config changes.
+ *
+ * The shorthand-key conventions:
+ *   - Spacing: `{prefix}-{tokenName}` → `{ [prefix]: tokenName }`
+ *   - Colors:  `{prefix}-{family-shade}` → `{ [pandaKey]: 'family.shade' }`
+ *              (root-level colors like `black` lose the dash split: `bg-black`)
+ *   - Font sizes: `text-{size}` → `{ fontSize: size }` (3+ segments mean a
+ *     color shorthand, so `text-lg` and `text-blue-500` disambiguate by
+ *     segment count)
+ *   - Font weights: `font-{weight}` → `{ fontWeight: weight }`
+ *   - Radii: `rounded-{radius}` → `{ rounded: radius }` (plus bare `rounded`
+ *     for the default)
+ *   - Shadows: `shadow-{shadow}` → `{ shadow: shadow }` (plus bare `shadow`)
+ */
+export function populateUtilityMapFromTokens(tokens: PandaTokens | undefined): void {
+  // Reset to just the keywords so multiple calls don't accumulate stale
+  // entries from prior token sets.
+  UTILITY_MAP.clear();
+  seedKeywords();
+
+  if (!tokens) return;
+
+  // Spacing × prefix cross-product.
+  const spacingPaths = collectTokenPaths(tokens.spacing);
+  for (const prefix of SPACING_PREFIX_NAMES) {
+    for (const value of spacingPaths) {
+      UTILITY_MAP.set(`${prefix}-${value}`, { [prefix]: value });
+    }
+  }
+
+  // Colors × prefix cross-product. Token paths use dot notation
+  // (`blue.500`, `black`); convert to Tailwind dash notation for the utility
+  // name while keeping the dotted form for Panda's value lookup.
+  for (const tailwindPrefix of COLOR_PREFIX_NAMES) {
+    const pandaKey = COLOR_PREFIX_TO_PANDA_KEY[tailwindPrefix];
+    for (const tokenPath of collectTokenPaths(tokens.colors)) {
+      const utilityName = `${tailwindPrefix}-${tokenPath.replace(/\./g, "-")}`;
+      UTILITY_MAP.set(utilityName, { [pandaKey]: tokenPath });
+    }
+  }
+
+  // Font sizes — `text-{size}`. Disambiguates from color `text-{family}-{shade}`
+  // by segment count (font sizes are always single-segment token names).
+  for (const size of collectTokenPaths(tokens.fontSizes)) {
+    UTILITY_MAP.set(`text-${size}`, { fontSize: size });
+  }
+
+  // Font weights — `font-{name}`.
+  for (const weight of collectTokenPaths(tokens.fontWeights)) {
+    UTILITY_MAP.set(`font-${weight}`, { fontWeight: weight });
+  }
+
+  // Border radii — `rounded-{radius}`, plus a bare `rounded` alias mapped
+  // to `md` (matches Tailwind's default).
+  for (const radius of collectTokenPaths(tokens.radii)) {
+    UTILITY_MAP.set(`rounded-${radius}`, { rounded: radius });
+  }
+  UTILITY_MAP.set("rounded", { rounded: "md" });
+
+  // Box shadows — `shadow-{shadow}`, plus bare `shadow` aliased to `sm`.
+  for (const shadow of collectTokenPaths(tokens.shadows)) {
+    UTILITY_MAP.set(`shadow-${shadow}`, { shadow: shadow });
+  }
+  UTILITY_MAP.set("shadow", { shadow: "sm" });
+}
 
 /**
  * Resolve a single utility-string name to its style fragment.
@@ -259,8 +221,8 @@ export function resolveUtility(name: string): StyleFragment | undefined {
 }
 
 /**
- * Snapshot of every recognized utility name. Consumed by `@bearbones/codegen`
- * to emit the `BearbonesUtilityName` type union.
+ * Snapshot of every recognized utility name. Consumed by `codegen-patch.ts`
+ * to emit the `BearbonesUtilityName` type union into the patched `css.d.ts`.
  */
 export function listUtilities(): readonly string[] {
   return Array.from(UTILITY_MAP.keys());

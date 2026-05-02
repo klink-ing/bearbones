@@ -17,4 +17,6 @@ export default defineConfig({
   // bearbonesHooks() in `config:resolved`.
   conditions: bearbonesPreset().conditions,
   hooks: bearbonesHooks(),
+  strictPropertyValues: true,
+  strictTokens: true,
 });

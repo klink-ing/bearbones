@@ -1,7 +1,7 @@
 {
   "name": "@bearbones/vite",
   "version": "0.0.0",
-  "description": "PandaCSS hooks for bearbones — group registration and css() utility-string lowering.",
+  "description": "PandaCSS hooks for bearbones — marker registration and css() utility-string lowering.",
   "license": "MIT",
   "files": [
     "dist"

@@ -2,22 +2,22 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import fastGlob from "fast-glob";
 import { parse } from "@babel/parser";
-import { registerGroup } from "./group-registry.ts";
+import { registerMarker } from "./marker-registry.ts";
 
 /**
  * Walk every file the Panda config includes, scan it for top-level
- * `group(...)` declarations imported from `bearbones`, and register each one.
+ * `marker(...)` declarations imported from `bearbones`, and register each one.
  *
- * Runs in `config:resolved` so the group conditions are present in the
+ * Runs in `config:resolved` so the marker conditions are present in the
  * resolved config before Panda's extractor starts. This guarantees emitted
- * CSS contains the descendant-selector rules for every declared group.
+ * CSS contains the descendant-selector rules for every declared marker.
  *
  * The scan is shallow: it parses each file with Babel but only inspects
  * top-level statements. Reading + parsing files this way is a few ms per
  * file in practice; for large monorepos this can be tuned by narrowing the
  * include glob or moving to a parallel worker pool. (Future work.)
  */
-export function prescanGroups(opts: {
+export function prescanMarkers(opts: {
   cwd: string;
   include: readonly string[];
   exclude: readonly string[];
@@ -41,7 +41,7 @@ function scanFile(absolutePath: string): void {
   }
   // Cheap rejection: skip files that don't import from bearbones at all.
   if (!content.includes("bearbones")) return;
-  if (!content.includes("group(")) return;
+  if (!content.includes("marker(")) return;
 
   let ast: any;
   try {
@@ -53,18 +53,18 @@ function scanFile(absolutePath: string): void {
     return;
   }
 
-  let groupBinding: string | null = null;
+  let markerBinding: string | null = null;
   for (const node of ast.program.body) {
     if (node.type !== "ImportDeclaration") continue;
     if (node.source.value !== "bearbones") continue;
     for (const spec of node.specifiers) {
       if (spec.type !== "ImportSpecifier") continue;
-      if (spec.imported.name === "group") {
-        groupBinding = spec.local.name;
+      if (spec.imported.name === "marker") {
+        markerBinding = spec.local.name;
       }
     }
   }
-  if (!groupBinding) return;
+  if (!markerBinding) return;
 
   for (const node of ast.program.body) {
     const decl =
@@ -74,10 +74,10 @@ function scanFile(absolutePath: string): void {
       if (declarator.id.type !== "Identifier") continue;
       if (declarator.init?.type !== "CallExpression") continue;
       const callee = declarator.init.callee;
-      if (callee.type !== "Identifier" || callee.name !== groupBinding) continue;
+      if (callee.type !== "Identifier" || callee.name !== markerBinding) continue;
       const arg = declarator.init.arguments[0];
       if (!arg || arg.type !== "StringLiteral") continue;
-      registerGroup(arg.value, resolvePath(absolutePath));
+      registerMarker(arg.value, resolvePath(absolutePath));
     }
   }
 }

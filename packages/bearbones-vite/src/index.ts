@@ -3,9 +3,10 @@
  *
  * This module ships two integration points that work together:
  *
- *   1. `bearbonesHooks()` — Panda hooks (`config:resolved` + `parser:before`)
- *      that lower utility strings + group symbols when Panda extracts CSS.
- *      This is what makes the right rules appear in `styled-system/styles.css`.
+ *   1. `bearbonesHooks()` — Panda hooks (`config:resolved` + `parser:before`
+ *      + `codegen:prepare`) that lower utility strings + marker symbols when
+ *      Panda extracts CSS, and patch the emitted `css()` type signature so
+ *      the host project's `css()` import accepts utility strings natively.
  *
  *   2. `bearbonesVitePlugin()` — a Vite plugin that runs the SAME lowering
  *      on every `.ts/.tsx` file before it reaches the browser. Without this,
@@ -36,8 +37,10 @@
  */
 
 import { transform } from "./transform.ts";
-import { buildGroupConditions } from "./group-registry.ts";
-import { prescanGroups } from "./prescan.ts";
+import { buildMarkerConditions } from "./marker-registry.ts";
+import { prescanMarkers } from "./prescan.ts";
+import { patchArtifacts, type PandaArtifact } from "./codegen-patch.ts";
+import { populateUtilityMapFromTokens } from "./utility-map.ts";
 
 export interface BearbonesHooksOptions {
   /**
@@ -52,30 +55,41 @@ export interface BearbonesHooksOptions {
  * Return a Panda hooks object that wires bearbones into Panda's pipeline.
  *
  * Hooks set:
- *   - `parser:before` — rewrites `group()` declarations and lowers `css()`,
+ *   - `parser:before` — rewrites `marker()` declarations and lowers `css()`,
  *     `cva()`, `sva()` argument shapes into Panda's native form. After this
  *     hook returns, Panda's extractor parses normalized source as if it were
  *     authored that way directly.
  *
- *   - `config:resolved` — registers the conditions for every group discovered
+ *   - `config:resolved` — registers the conditions for every marker discovered
  *     so far. Because `config:resolved` fires once at startup before any
  *     parsing, this is also re-invoked through Panda's config-change
- *     mechanism on rebuilds; new groups added during a session take effect
+ *     mechanism on rebuilds; new markers added during a session take effect
  *     after the next parser pass completes.
+ *
+ *   - `codegen:prepare` — patches Panda's emitted `styled-system/css/css.d.ts`
+ *     in memory before it's written to disk, widening the `css()` signature
+ *     to accept bearbones utility strings. See `codegen-patch.ts` for the
+ *     patch shape and rationale.
  */
 export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
   return {
     "config:resolved": ({ config }: { config: any }) => {
-      // Pre-scan every included file for `group()` declarations so the
+      // Populate the utility-string lookup table from the host project's
+      // resolved Panda tokens. After this runs, every utility-shorthand
+      // (`p-{spacing}`, `bg-{color-shade}`, `text-{fontSize}`, …) reflects
+      // the actual tokens available in the project — no manual scale arrays.
+      populateUtilityMapFromTokens(config.theme?.tokens);
+
+      // Pre-scan every included file for `marker()` declarations so the
       // resulting condition set is present in the config before Panda's
       // extractor runs.
       const cwd = config.cwd ?? process.cwd();
       const include = (config.include as string[] | undefined) ?? [];
       const exclude = (config.exclude as string[] | undefined) ?? [];
       if (include.length > 0) {
-        prescanGroups({ cwd, include, exclude });
+        prescanMarkers({ cwd, include, exclude });
       }
-      const conditions = buildGroupConditions();
+      const conditions = buildMarkerConditions();
       if (Object.keys(conditions).length === 0) return;
       // Panda's resolved config already flattened `extend` blocks before this
       // hook fires, so merging into `extend` again wraps the conditions in a
@@ -95,6 +109,14 @@ export function bearbonesHooks(_options: BearbonesHooksOptions = {}) {
       if (result.content === undefined) return;
       return result.content;
     },
+    // Mirrors the existing pattern of `config:resolved` (which takes
+    // `config: any`): we keep the public hook signature loosely typed and
+    // strict-type the internal logic via `PandaArtifact`. Importing
+    // @pandacss/types here would drag pkg-types → typescript transitive
+    // imports into the rolldown bundle.
+    "codegen:prepare": ({ artifacts }: { artifacts: PandaArtifact[] }): PandaArtifact[] => {
+      return patchArtifacts(artifacts);
+    },
   };
 }
 
@@ -113,7 +135,7 @@ export default bearbonesHooks;
 export interface BearbonesVitePluginOptions {
   /**
    * Glob patterns mirrored from your Panda config's `include`. Used by the
-   * plugin's pre-scan to discover `group()` declarations across the project
+   * plugin's pre-scan to discover `marker()` declarations across the project
    * before the first module is transformed. Defaults to a sensible mirror
    * of `./src/**\/*.{ts,tsx}` if not provided.
    */
@@ -138,7 +160,7 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
       prescanned = true;
       const include = options.include ?? ["./src/**/*.{ts,tsx}"];
       const exclude = options.exclude ?? [];
-      prescanGroups({ cwd: config.root, include, exclude });
+      prescanMarkers({ cwd: config.root, include, exclude });
     },
     transform(code: string, id: string) {
       // Vite passes the file's full URL/path; ignore non-source-file ids.
@@ -150,9 +172,17 @@ export function bearbonesVitePlugin(options: BearbonesVitePluginOptions = {}): {
   };
 }
 
-// Re-export internal pieces that the test suite and codegen consume.
-export { listGroups } from "./group-registry.ts";
-export { listUtilities } from "./utility-map.ts";
-// Re-export the derived utility-name union so consumers (and the bearbones
-// facade) can use it before `@bearbones/codegen` is fully wired up.
-export type { BearbonesUtilityName } from "./utility-map.ts";
+// Re-export internal pieces that the test suite consumes.
+export { listMarkers } from "./marker-registry.ts";
+export { listUtilities, populateUtilityMapFromTokens } from "./utility-map.ts";
+// Expose the codegen patch helpers for tests / advanced wiring.
+export { patchCssArtifact, patchArtifacts } from "./codegen-patch.ts";
+export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
+
+// NOTE: `BearbonesUtilityName` is no longer re-exported as a static type.
+// The set of valid utility names is now derived from the host project's
+// resolved Panda tokens at runtime; the only authoritative type union is
+// the one emitted into the patched `css.d.ts` by `codegen-patch.ts`.
+// Consumers wanting a typed utility-name union should import it from there:
+//
+//   import type { BearbonesUtilityName } from '../styled-system/css';
