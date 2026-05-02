@@ -29,10 +29,11 @@ css({ _hover: ["bg-blue-500", "text-white"] });
 // Nested Panda style object under a condition (recursion preserves Panda).
 css({ _hover: { padding: "8" } });
 
-// Bearbones marker condition key (already in Panda's Conditions interface
-// via `bearbonesPreset().conditions` + the prescan). Accepts a utility
-// string directly.
-css({ [cardMarker.hover]: "text-blue-500" });
+// Bearbones marker relational condition key — typed shortcut form. The
+// `_hover` builder yields `.is.{ancestor,descendant,sibling}`; each lands as
+// a literal condition key registered by the prescan into Panda's Conditions
+// interface.
+css({ [cardMarker._hover.is.ancestor]: "text-blue-500" });
 
 // Utility string under an arbitrary nested selector.
 css({ "&:focus-within": "p-4" });

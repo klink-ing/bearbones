@@ -79,7 +79,7 @@ export const x = css({ _hover: ["bg-blue-500", "text-white"] });
     expect(result.content).toContain('"_hover":{"bg":"blue.500","color":"white"}');
   });
 
-  it("rewrites marker() declarations to a frozen literal", () => {
+  it("rewrites marker() declarations to a callable record", () => {
     const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
@@ -89,7 +89,7 @@ export const cardMarker = marker("card");
     });
     expect(result.content).toBeDefined();
     expect(result.content).toContain('anchor: "bearbones-marker-card_');
-    expect(result.content).toContain('hover: "_markerHover_card_');
+    expect(result.content).toMatch(/_hover: \{ is: \{ ancestor: "_marker_card_/);
   });
 
   it("registers markers in the global registry", () => {
@@ -135,12 +135,14 @@ export const cardMarker = marker("card");
       source: `
 import { css } from "../styled-system/css";
 import { cardMarker } from "./markers.ts";
-export const x = css({ [cardMarker.hover]: "bg-blue-500" });
+export const x = css({ [cardMarker._hover.is.ancestor]: "bg-blue-500" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
-    // The computed key should resolve to the registered condition name.
-    expect(result.content).toMatch(/"_markerHover_card_[0-9a-f]{8}":\{"bg":"blue\.500"\}/);
+    // The computed key should resolve to the registered relational condition name.
+    expect(result.content).toMatch(
+      /"_marker_card_[0-9a-f]{8}_ancestor_[0-9a-f]{8}":\{"bg":"blue\.500"\}/,
+    );
   });
 
   it("passes through files with no bearbones imports unchanged", () => {
@@ -176,13 +178,16 @@ export const cardMarker = marker("card");
     expect(result.content).toBeDefined();
     // Helper is prepended once per file.
     expect(result.content).toContain("__bearbones_relations");
-    // Synthesized record uses Object.assign to wrap the call form + property
-    // shortcuts. Function half delegates to the helper with the marker suffix.
+    // Synthesized record uses Object.assign to wrap the call form + the
+    // typed `_<state>` builder properties. Function half delegates to the
+    // helper with the marker suffix.
     expect(result.content).toContain("Object.assign((m) => __bearbones_relations(m, ");
     // Underscore builder forms are emitted with literal-string is.<rel> keys.
     expect(result.content).toMatch(
       /_hover: \{ is: \{ ancestor: "_marker_card_[0-9a-f]{8}_ancestor_[0-9a-f]{8}"/,
     );
+    // The legacy `<binding>.<state>` shortcut form has been removed.
+    expect(result.content).not.toMatch(/hover: "_markerHover_card_/);
   });
 
   it("lowers marker(LITERAL).is.<relation> as a computed key", () => {

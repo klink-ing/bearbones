@@ -26,14 +26,14 @@ export function Demo() {
       >
         <h2
           className={css("text-lg", "font-bold", {
-            [cardMarker.hover]: "text-blue-500",
+            [cardMarker._hover.is.ancestor]: "text-blue-500",
           })}
         >
           Card title
         </h2>
         <p
           className={css("text-sm", "text-gray-500", {
-            [cardMarker.hover]: "text-gray-700",
+            [cardMarker._hover.is.ancestor]: "text-gray-700",
           })}
         >
           Hover the card to see both lines change colour.
@@ -45,8 +45,8 @@ export function Demo() {
         <article className={cx(css("p-4", "rounded-md", "bg-white"), cardMarker.anchor)}>
           <span
             className={css("text-sm", {
-              [rowMarker.hover]: "text-blue-500",
-              [cardMarker.hover]: "text-red-500",
+              [rowMarker._hover.is.ancestor]: "text-blue-500",
+              [cardMarker._hover.is.ancestor]: "text-red-500",
             })}
           >
             Hovers respond to either ancestor independently.

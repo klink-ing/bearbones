@@ -68,11 +68,11 @@ export function cx(...args: Array<string | false | null | undefined>): string {
  * `@bearbones/vite`'s `codegen:prepare` hook from the prescan output) and
  * falls back to a wide template-literal shape for unregistered ids.
  *
- * The registered entry uses *literal* strings for every condition key
- * (`hover: '_markerHover_card_a27adb16'`), which lets `[cardMarker.hover]`
- * narrow to a specific `keyof Conditions` member at call sites — avoiding
- * the index-signature widening that template literals cause when used as
- * computed keys alongside other static keys.
+ * The registered entry uses *literal* strings for every condition key (e.g.
+ * `_marker_card_a27adb16_ancestor_<modhash>`), which lets
+ * `[cardMarker._hover.is.ancestor]` narrow to a specific `keyof Conditions`
+ * member at call sites — avoiding the index-signature widening that template
+ * literals cause when used as computed keys alongside other static keys.
  */
 export function marker<Id extends string>(_id: Id): BearbonesMarkerRuntime<Id> {
   throw new Error(
@@ -129,15 +129,9 @@ export interface DefaultBearbonesMarkerBuilder<Id extends string> {
 
 export interface DefaultBearbonesMarker<Id extends string = string> {
   readonly anchor: string;
-  // Existing shortcuts (no change). Each is the Panda condition key for the
-  // element being styled when an ancestor with this marker is in that state.
-  readonly hover: `_markerHover_${Id}_${string}`;
-  readonly focus: `_markerFocus_${Id}_${string}`;
-  readonly active: `_markerActive_${Id}_${string}`;
-  readonly focusVisible: `_markerFocusVisible_${Id}_${string}`;
-  readonly disabled: `_markerDisabled_${Id}_${string}`;
   // Underscore builder form: each yields an `.is.{ancestor,descendant,sibling}`
-  // chain that lets consumers pick the relation explicitly.
+  // chain that lets consumers pick the relation explicitly. Equivalent to
+  // calling the marker with the matching `STATE_PSEUDO[state]` selector.
   readonly _hover: DefaultBearbonesMarkerBuilder<Id>;
   readonly _focus: DefaultBearbonesMarkerBuilder<Id>;
   readonly _active: DefaultBearbonesMarkerBuilder<Id>;

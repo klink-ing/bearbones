@@ -94,20 +94,20 @@ export type BearbonesSystemStyleObject =
 type Styles = BearbonesSystemStyleObject | undefined | null | false
 ```
 
-Marker condition keys (`_markerHover_card_a3f4b2c1`, etc.) are _not_ a separate template-literal type. They're already in Panda's `Conditions` interface because the bearbones preset registers them via `bearbonesPreset().conditions` and `buildMarkerConditions()`. The prescan in `config:resolved` ensures every `marker()` declaration is registered before Panda's codegen runs, so `Condition = keyof Conditions` naturally includes them.
+Marker condition keys (`_marker_card_a3f4b2c1_ancestor_<modhash>`, etc.) are _not_ a separate template-literal type. They're already in Panda's `Conditions` interface because the prescan walks every chain usage site and `buildMarkerConditions()` emits one entry per `(marker, modifier, relation)` triple. So `Condition = keyof Conditions` naturally includes them.
 
 ### Behavioural diff
 
-| Call site                                        | Base Panda                                      | Bearbones-patched                                           |
-| ------------------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------- |
-| `css('p-4')`                                     | ❌ string not assignable to `SystemStyleObject` | ✅ `'p-4'` ∈ `BearbonesUtilityName`                         |
-| `css('p-44')` (typo)                             | ❌                                              | ❌ — typo not in union                                      |
-| `css({ padding: '4' })`                          | ✅                                              | ✅ — property side untouched                                |
-| `css({ padding: 'p-4' })`                        | ❌                                              | ❌ — utility strings rejected as property values            |
-| `css({ _hover: ['bg-blue-500', 'text-white'] })` | ❌ array shape doesn't match                    | ✅ — condition value can be `readonly BearbonesNested<P>[]` |
-| `css({ _hover: { padding: '8' } })`              | ✅                                              | ✅ — recursion preserves Panda                              |
-| `css({ [cardMarker.hover]: 'text-blue-500' })`   | ❌ key not in `Condition` union                 | ✅ — marker condition key is in `Condition` via the preset  |
-| `css({ '&:focus-within': 'p-4' })`               | ❌                                              | ✅ — selector value position is `BearbonesNested<P>`        |
+| Call site                                                   | Base Panda                                      | Bearbones-patched                                           |
+| ----------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
+| `css('p-4')`                                                | ❌ string not assignable to `SystemStyleObject` | ✅ `'p-4'` ∈ `BearbonesUtilityName`                         |
+| `css('p-44')` (typo)                                        | ❌                                              | ❌ — typo not in union                                      |
+| `css({ padding: '4' })`                                     | ✅                                              | ✅ — property side untouched                                |
+| `css({ padding: 'p-4' })`                                   | ❌                                              | ❌ — utility strings rejected as property values            |
+| `css({ _hover: ['bg-blue-500', 'text-white'] })`            | ❌ array shape doesn't match                    | ✅ — condition value can be `readonly BearbonesNested<P>[]` |
+| `css({ _hover: { padding: '8' } })`                         | ✅                                              | ✅ — recursion preserves Panda                              |
+| `css({ [cardMarker._hover.is.ancestor]: 'text-blue-500' })` | ❌ key not in `Condition` union                 | ✅ — relational condition key registered via the prescan    |
+| `css({ '&:focus-within': 'p-4' })`                          | ❌                                              | ✅ — selector value position is `BearbonesNested<P>`        |
 
 ## Components
 
@@ -183,7 +183,7 @@ css("p-4");
 css("p-4", "bg-blue-500", { padding: "8" });
 css({ _hover: ["bg-blue-500", "text-white"] });
 css({ _hover: { padding: "8" } });
-css({ [cardMarker.hover]: "text-blue-500" });
+css({ [cardMarker._hover.is.ancestor]: "text-blue-500" });
 css({ "&:focus-within": ["p-4", "bg-blue-500"] });
 
 // @ts-expect-error — typo'd utility name

@@ -3,9 +3,10 @@ import { definePreset } from "@pandacss/dev";
 /**
  * Stable conditions registered by bearbones beyond Panda's preset-base defaults.
  *
- * Marker conditions (`_markerHover_<id>_<hash>`, etc.) are NOT defined here —
- * they are registered dynamically by `@bearbones/vite` as it discovers
- * `marker()` declarations during the parser:before pass.
+ * Marker conditions (`_marker_<suffix>_<relation>_<modhash>`) are NOT defined
+ * here — they are registered dynamically by `@bearbones/vite` as it discovers
+ * `marker()(':sel').is.<rel>` and `marker()._<state>.is.<rel>` chains during
+ * the prescan + parser:before passes.
  */
 const STATIC_CONDITIONS = {
   // Color scheme — preset-base ships `_dark` already, but we re-declare for

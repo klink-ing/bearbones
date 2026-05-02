@@ -122,19 +122,21 @@ describe("patchCssArtifact — marker registry augmentation", () => {
     expect(patched).toContain("interface BearbonesMarkerRegistry");
   });
 
-  it("emits one entry per registered marker with literal-string condition keys", () => {
+  it("emits one entry per registered marker with anchor + underscore builders", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_MARKERS);
-    // Card entry: id key, anchor class, and one literal per state.
+    // Card entry: id key, anchor class, and one underscore builder per state.
     expect(patched).toContain('"card": {');
     expect(patched).toContain('readonly anchor: "bearbones-marker-card_a27adb16";');
-    expect(patched).toContain('readonly hover: "_markerHover_card_a27adb16";');
-    expect(patched).toContain('readonly focus: "_markerFocus_card_a27adb16";');
-    expect(patched).toContain('readonly focusVisible: "_markerFocusVisible_card_a27adb16";');
-    expect(patched).toContain('readonly active: "_markerActive_card_a27adb16";');
-    expect(patched).toContain('readonly disabled: "_markerDisabled_card_a27adb16";');
+    expect(patched).toMatch(
+      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_card_a27adb16_ancestor_/,
+    );
     // Row entry exists too.
     expect(patched).toContain('"row": {');
-    expect(patched).toContain('readonly hover: "_markerHover_row_5ec0c285";');
+    expect(patched).toMatch(
+      /readonly _hover: \{ readonly is: \{ readonly ancestor: "_marker_row_5ec0c285_ancestor_/,
+    );
+    // The legacy `readonly hover: "_markerHover_..."` shortcut form is gone.
+    expect(patched).not.toMatch(/readonly hover: "_markerHover_/);
   });
 
   it("omits the augmentation block entirely when no markers are registered", () => {

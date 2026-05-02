@@ -8,7 +8,6 @@ import {
   MARKER_STATES,
   STATE_PSEUDO,
   buildRelationConditionName,
-  modifierHash,
   registerMarker,
   registerMarkerCondition,
   type MarkerRelation,
@@ -173,8 +172,6 @@ function lowerArgument(node: any, markers: MarkerCallContext): StyleFragment | n
 /**
  * Lower an object literal into a Panda style fragment. Keys may be:
  *   - A static key name (`_hover`, `padding`) — passed through.
- *   - A computed `[marker.<state>]` key — rewritten to the registered Panda
- *     condition name like `_markerHover_card_a3f4b2`.
  *   - A computed `[marker(LITERAL).is.<relation>]` or `[marker._<state>.is.<relation>]`
  *     key — rewritten to the registered relational condition name.
  */
@@ -197,24 +194,10 @@ function resolveKey(prop: any, markers: MarkerCallContext): string | null {
     if (prop.key.type === "StringLiteral") return prop.key.value;
     return null;
   }
-  // Computed key: try the relational chain shapes first; fall back to the
-  // simple `[marker.<state>]` shortcut shape.
-  const relational = resolveRelationalKey(prop.key, markers);
-  if (relational != null) return relational;
-  if (
-    prop.key.type === "MemberExpression" &&
-    prop.key.object.type === "Identifier" &&
-    prop.key.property.type === "Identifier" &&
-    !prop.key.computed
-  ) {
-    const bindingName = prop.key.object.name;
-    const state = prop.key.property.name;
-    const marker = markers.byBinding(bindingName);
-    if (!marker) return null;
-    if (!isValidState(state)) return null;
-    return `_marker${capitalize(state)}_${marker.suffix}`;
-  }
-  return null;
+  // Computed key: only the relational chain shapes are recognized. The legacy
+  // `[marker.<state>]` shortcut form was removed in favor of the explicit
+  // `[marker._<state>.is.<relation>]` builder.
+  return resolveRelationalKey(prop.key, markers);
 }
 
 /**
@@ -286,10 +269,6 @@ function literalStringArg(arg: any): string | null {
     return arg.quasis.map((q: any) => q.value.cooked).join("");
   }
   return null;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function lowerValue(node: any, markers: MarkerCallContext): unknown {
@@ -469,11 +448,12 @@ function resolveRelativeImport(fromFile: string, specifier: string): string | un
 
 /**
  * Discover top-level `const x = marker('id')` declarations. Each becomes a
- * binding the call-site lowering can resolve when it sees `[x.hover]` keys.
+ * binding the call-site lowering can resolve when it sees `[x._<state>.is.<rel>]`
+ * computed keys.
  *
  * For each declaration, we also rewrite the right-hand side to a synthesized
- * callable record carrying the marker's anchor class, the registered shortcut
- * keys, and a tiny IIFE that handles `(modifier).is.<relation>` chains at
+ * callable record carrying the marker's anchor class, the typed `_<state>`
+ * builders, and a tiny IIFE that handles `(modifier).is.<relation>` chains at
  * runtime. Inline FNV-1a keeps build-side and runtime modifier hashes aligned
  * without a shared bundle import.
  */
@@ -550,26 +530,20 @@ const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (m, s) => {
 function renderMarkerRecord(marker: RegisteredMarker): string {
   const fields: string[] = [
     `anchor: ${JSON.stringify(marker.anchorClass)}`,
-    ...MARKER_STATES.map((state) => `${state}: "_marker${capitalize(state)}_${marker.suffix}"`),
     // Build the underscore builder forms eagerly with literal strings. The
     // inlined hash function below rebuilds the same literals at runtime via
     // the call form, so both paths agree.
     ...MARKER_STATES.map((state) => {
       const modifier = STATE_PSEUDO[state];
-      const h = modifierHash(modifier);
       const ancestor = buildRelationConditionName(marker.suffix, "ancestor", modifier);
       const descendant = buildRelationConditionName(marker.suffix, "descendant", modifier);
       const sibling = buildRelationConditionName(marker.suffix, "sibling", modifier);
-      // `h` is captured for symmetry with the runtime's computed naming and
-      // to make the snapshot self-documenting; the values below are derived
-      // from it deterministically.
-      void h;
       return `_${state}: { is: { ancestor: "_${ancestor}", descendant: "_${descendant}", sibling: "_${sibling}" } }`;
     }),
   ];
-  // Object.assign(fn, { ...shortcuts }) — the function half handles the
+  // Object.assign(fn, { ...props }) — the function half handles the
   // `(modifier).is.<relation>` call form, the assigned properties cover the
-  // existing shortcuts and the `_<state>.is.<relation>` underscore form.
+  // anchor class and the `_<state>.is.<relation>` underscore builders.
   return `Object.assign((m) => ${RELATIONS_HELPER_NAME}(m, ${JSON.stringify(marker.suffix)}), { ${fields.join(", ")} })`;
 }
 

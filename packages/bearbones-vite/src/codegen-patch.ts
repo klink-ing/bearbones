@@ -97,12 +97,13 @@ export function patchCssArtifact(
   const conditionsAugmentation = renderConditionsAugmentation(markers);
 
   // The marker-registry augmentation is appended at the end of the file. It's
-  // a `declare module 'bearbones'` block that injects literal-string condition
-  // keys for every marker discovered by the prescan. Consumers' `cardMarker.hover`
-  // then has type `'_markerHover_card_a27adb16'` (specific) instead of
-  // `` `_markerHover_card_${string}` `` (template literal) — eliminating the
-  // string-index widening that template literals cause when used as computed
-  // keys alongside other static keys in the same object literal.
+  // a `declare module 'bearbones'` block that injects literal-string call
+  // overloads + `_<state>` builder properties for every marker discovered by
+  // the prescan. Consumers' `cardMarker._hover.is.ancestor` then has type
+  // `'_marker_card_a27adb16_ancestor_<modhash>'` (specific) instead of a
+  // template-literal fallback — eliminating the string-index widening that
+  // template literals cause when used as computed keys alongside other static
+  // keys in the same object literal.
   //
   // The conditions augmentation is the open-set companion to the closed-set
   // marker registry: it widens `keyof Conditions` with template-literal index
@@ -157,13 +158,13 @@ function renderInjectedTypes(utilityUnion: string): string {
   // string-literal union to a structural string type and the closed-set
   // checking would silently break.
   // No `BearbonesMarkerConditionKey` mapped-type slot here. Marker condition
-  // keys ARE keys of Panda's `Conditions` interface (registered by the bearbones
-  // preset + prescan), so `[K in keyof Conditions]` already covers them. Adding
-  // a separate template-literal mapped slot used to introduce a `string` index
+  // keys ARE keys of Panda's `Conditions` interface (registered by the
+  // prescan), so `[K in keyof Conditions]` already covers them. Adding a
+  // separate template-literal mapped slot used to introduce a `string` index
   // signature on consumer object literals that conflicted with Panda's
   // `CssVarProperties[ '--${string}' ]` index — see the marker-registry
-  // augmentation appended below for how we narrow `cardMarker.hover` to a
-  // specific literal that lands inside `keyof Conditions` directly.
+  // augmentation appended below for how we narrow `cardMarker._hover.is.ancestor`
+  // to a specific literal that lands inside `keyof Conditions` directly.
   return [
     "export type BearbonesUtilityName =",
     utilityUnion,
@@ -189,15 +190,15 @@ function renderInjectedTypes(utilityUnion: string): string {
 /**
  * Render a `declare module 'bearbones'` block that augments the empty
  * `BearbonesMarkerRegistry` interface in the bearbones package with one
- * entry per marker discovered by the prescan. Each entry uses literal-string
- * condition keys (e.g., `hover: '_markerHover_card_a27adb16'`) matching the
- * actual hashed condition names registered with Panda.
+ * entry per marker discovered by the prescan. Each entry pairs the anchor
+ * class with the typed `_<state>` builders, plus closed-set call overloads
+ * for every modifier the prescan saw at a usage site.
  *
- * Consumers' `cardMarker.hover` then resolves through the package's
- * `BearbonesMarkerRuntime<Id>` type to a specific literal, which is a member
- * of `keyof Conditions` — letting `[cardMarker.hover]: ...` narrow correctly
- * inside object literals without forcing TypeScript to widen to a string
- * index signature.
+ * Consumers' `cardMarker._hover.is.ancestor` then resolves through the
+ * package's `BearbonesMarkerRuntime<Id>` type to a specific literal that's a
+ * member of `keyof Conditions` — letting `[cardMarker._hover.is.ancestor]: ...`
+ * narrow correctly inside object literals without forcing TypeScript to
+ * widen to a string index signature.
  */
 function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]): string {
   if (markers.length === 0) return "";
@@ -222,22 +223,18 @@ function renderMarkerRegistryAugmentation(markers: readonly RegisteredMarker[]):
 /**
  * Render the per-marker entry. Each entry is a function-with-properties
  * intersection: the call signature handles `marker(':sel')` (one overload per
- * registered modifier-literal), and the `&` clause attaches the property
- * shortcuts plus the underscore builder forms.
+ * registered modifier-literal, plus a wide string fallback), and the `&`
+ * clause attaches the anchor class and the underscore builder forms.
  *
  * Why a function-with-`&`-properties: TS infers the call signature from the
  * function half (so `marker(':hover')` narrows to the right overload) and
- * still resolves member access (`marker.hover`, `marker._focus`) through the
- * intersected object type. This is the standard trick for a callable object
- * shape and is what TypeScript's own emit uses for hybrid types.
+ * still resolves member access (`marker.anchor`, `marker._focus`) through
+ * the intersected object type. This is the standard trick for a callable
+ * object shape and is what TypeScript's own emit uses for hybrid types.
  */
 function renderMarkerEntry(marker: RegisteredMarker): string {
   const propertyFields: string[] = [
     `      readonly anchor: ${JSON.stringify(marker.anchorClass)};`,
-    ...MARKER_STATES.map((state) => {
-      const conditionName = `_marker${capitalize(state)}_${marker.suffix}`;
-      return `      readonly ${state}: ${JSON.stringify(conditionName)};`;
-    }),
     ...MARKER_STATES.map((state) => renderUnderscoreBuilder(state, marker, /*indent*/ 6)),
   ];
   // Distinct call-form modifiers (the underscore builders already cover the
@@ -333,10 +330,6 @@ function renderConditionsAugmentation(markers: readonly RegisteredMarker[]): str
 }
 
 void modifierHash; // re-exported by the registry; we only need the pre-hashed condition names
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 /**
  * Patch a Panda `Artifact[]` array in-place by finding the `css-fn` artifact's

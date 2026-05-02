@@ -225,23 +225,11 @@ export function listMarkers(): readonly RegisteredMarker[] {
 export function buildMarkerConditions(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const marker of MARKERS.values()) {
-    for (const state of MARKER_STATES) {
-      // Panda registers conditions WITHOUT leading underscores; the underscore
-      // is added at lookup time when consumers write `_<name>` in css() calls.
-      // Mismatching this strips the rule from the output silently.
-      const conditionName = `marker${capitalize(state)}_${marker.suffix}`;
-      const pseudo = STATE_PSEUDO[state];
-      out[conditionName] = `.${marker.anchorClass}${pseudo} &`;
-    }
     for (const [conditionName, rel] of marker.relations) {
       out[conditionName] = rel.selector;
     }
   }
   return out;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**

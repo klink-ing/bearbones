@@ -93,11 +93,11 @@ describe("registerMarkerCondition", () => {
     void ancestorKey; // suppress unused
   });
 
-  it("preserves the existing five fixed-state shortcuts alongside relations", () => {
+  it("does not emit legacy `markerHover_<suffix>` shortcut conditions anymore", () => {
     registerMarkerCondition("x", "/m.ts", ":has(.error)", "ancestor");
     const conditions = buildMarkerConditions();
-    const shortcutKeys = Object.keys(conditions).filter((k) => k.startsWith("markerHover_x_"));
-    expect(shortcutKeys.length).toBe(1);
+    const legacy = Object.keys(conditions).filter((k) => /^marker(Hover|Focus|Active)_/.test(k));
+    expect(legacy).toEqual([]);
   });
 });
 
