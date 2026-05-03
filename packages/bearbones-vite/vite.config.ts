@@ -2,7 +2,7 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   pack: {
-    dts: { tsgo: true },
+    dts: true,
     exports: true,
     // `@bearbones/utils` is a private workspace package that never publishes.
     // Inline its source (and types) into this dist so consumers don't see a
