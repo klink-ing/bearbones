@@ -6,7 +6,7 @@
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
     "dev": "vp run website#dev",
-    "check": "vp run --filter '@bearbones/*' --filter bearbones build && vp run --filter website codegen && vp check && vp run -r test",
+    "check": "vp run --filter '@bearbones/*' build && vp run --filter website codegen && vp check && vp run -r test",
     "fix": "vp fmt",
     "prepare": "vp config"
   },

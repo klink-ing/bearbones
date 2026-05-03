@@ -81,7 +81,7 @@ export const x = css({ _hover: ["bg-blue-500", "text-white"] });
     const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
-import { marker } from "bearbones";
+import { marker } from "../styled-system/css";
 export const cardMarker = marker("card");
       `.trim(),
     });
@@ -96,14 +96,12 @@ export const cardMarker = marker("card");
     const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
-import { marker } from "bearbones";
+import { marker } from "../styled-system/css";
 export const cardMarker = marker("card");
 export const rowMarker = marker("row");
       `.trim(),
     });
     expect(result.content).toBeDefined();
-    // Each marker call site replaced with a synthesized record carrying its
-    // own anchor class, derived purely from `(id, modulePath)`.
     expect(result.content).toMatch(/anchor: "bearbones-marker-card_[0-9a-f]{8}"/);
     expect(result.content).toMatch(/anchor: "bearbones-marker-row_[0-9a-f]{8}"/);
   });
@@ -113,7 +111,7 @@ export const rowMarker = marker("row");
       transform({
         filePath: "/virtual/markers.ts",
         source: `
-import { marker } from "bearbones";
+import { marker } from "../styled-system/css";
 const name = "card";
 export const cardMarker = marker(name);
         `.trim(),
@@ -127,7 +125,7 @@ export const cardMarker = marker(name);
     const markersPath = join(dir, "markers.ts");
     writeFileSync(
       markersPath,
-      `import { marker } from "bearbones";
+      `import { marker } from "../styled-system/css";
 export const cardMarker = marker("card");
 `,
     );
@@ -148,7 +146,7 @@ export const x = css({ [cardMarker._hover.is.ancestor]: "bg-blue-500" });
     );
   });
 
-  it("passes through files with no bearbones imports unchanged", () => {
+  it("passes through files with no styled-system imports unchanged", () => {
     const source = "export const x = 1;";
     const result = transform({
       filePath: "/virtual/plain.ts",
@@ -174,7 +172,7 @@ describe("transform — relational marker chains", () => {
     const result = transform({
       filePath: "/virtual/markers.ts",
       source: `
-import { marker } from "bearbones";
+import { marker } from "../styled-system/css";
 export const cardMarker = marker("card");
       `.trim(),
     });
@@ -182,10 +180,10 @@ export const cardMarker = marker("card");
     // Helper is prepended once per file.
     expect(result.content).toContain("__bearbones_relations");
     // Synthesized record uses Object.assign to wrap the call form + the
-    // typed `_<state>` builder properties. Function half delegates to the
+    // typed `_<name>` builder properties. Function half delegates to the
     // helper with the marker's anchor class.
     expect(result.content).toMatch(
-      /Object\.assign\(\(m\) => __bearbones_relations\(m, "bearbones-marker-card_/,
+      /Object\.assign\(\(c\) => __bearbones_relations\(c, "bearbones-marker-card_/,
     );
     // Underscore builder forms are emitted with literal raw-selector strings.
     expect(result.content).toMatch(
@@ -196,14 +194,13 @@ export const cardMarker = marker("card");
     expect(result.content).not.toMatch(/_marker_card_[0-9a-f]{8}_ancestor_/);
   });
 
-  it("lowers marker(LITERAL).is.ancestor to a raw selector key", () => {
+  it("lowers marker('&:has(.error)').is.ancestor to a raw selector key (call form, & substituted)", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
-import { css } from "../styled-system/css";
-import { marker } from "bearbones";
+import { css, marker } from "../styled-system/css";
 const m = marker("container");
-export const x = css({ [m(":has(.error)").is.ancestor]: "p-4" });
+export const x = css({ [m("&:has(.error)").is.ancestor]: "p-4" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
@@ -212,12 +209,11 @@ export const x = css({ [m(":has(.error)").is.ancestor]: "p-4" });
     );
   });
 
-  it("lowers marker._<state>.is.descendant to a `&:has(...)` raw selector key", () => {
+  it("lowers marker._<name>.is.descendant to a `&:has(...)` raw selector key", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
-import { css } from "../styled-system/css";
-import { marker } from "bearbones";
+import { css, marker } from "../styled-system/css";
 const m = marker("panel");
 export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
       `.trim(),
@@ -232,10 +228,9 @@ export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
-import { css } from "../styled-system/css";
-import { marker } from "bearbones";
+import { css, marker } from "../styled-system/css";
 const m = marker("group");
-export const x = css({ [m(":focus-within").is.sibling]: "p-4" });
+export const x = css({ [m("&:focus-within").is.sibling]: "p-4" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
@@ -248,17 +243,14 @@ export const x = css({ [m(":focus-within").is.sibling]: "p-4" });
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
-import { css } from "../styled-system/css";
-import { marker } from "bearbones";
+import { css, marker } from "../styled-system/css";
 const widgetMarker = marker("widget");
 export const x = css({
-  [widgetMarker(":has(.error)").is.ancestor]: "p-4",
+  [widgetMarker("&:has(.error)").is.ancestor]: "p-4",
 });
       `.trim(),
     });
     expect(result.content).toBeDefined();
-    // Pull the suffix out of the synthesized record's anchor field and assert
-    // the chain's lowered selector uses the same one.
     const anchorMatch = result.content!.match(/anchor: "bearbones-marker-widget_([0-9a-f]{8})"/);
     expect(anchorMatch).not.toBeNull();
     const suffix = anchorMatch![1];
@@ -267,14 +259,60 @@ export const x = css({
     );
   });
 
-  it("leaves the chain untouched when modifier is dynamic", () => {
+  it("substitutes every & in the condition value (parent-nesting form)", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
-import { css } from "../styled-system/css";
-import { marker } from "bearbones";
+import { css, marker } from "../styled-system/css";
+const m = marker("card");
+export const x = css({ [m("[data-state=open] &").is.descendant]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    // Marker is the descendant of [data-state=open]; the styled element has
+    // the marker as a descendant of itself. Both `&` placeholders in the
+    // input refer to the marker; the wrapped relation re-introduces a
+    // trailing `&` for the styled element.
+    expect(result.content).toMatch(
+      /"&:has\(\[data-state=open\] \.bearbones-marker-card_[0-9a-f]{8}\)":\{"p":"4"\}/,
+    );
+  });
+
+  it("substitutes multiple & occurrences in a single condition value", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css, marker } from "../styled-system/css";
+const m = marker("card");
+export const x = css({ [m(".foo:has(&) ~ &").is.sibling]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /\.foo:has\(\.bearbones-marker-card_[0-9a-f]{8}\) ~ \.bearbones-marker-card_[0-9a-f]{8}/,
+    );
+  });
+
+  it("rejects a call-form condition value missing the & placeholder", () => {
+    expect(() =>
+      transform({
+        filePath: "/virtual/file.tsx",
+        source: `
+import { css, marker } from "../styled-system/css";
+const m = marker("noamp");
+export const x = css({ [m(":hover").is.ancestor]: "p-4" });
+        `.trim(),
+      }),
+    ).toThrow(/'&' placeholder/);
+  });
+
+  it("leaves the chain untouched when condition value is dynamic", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css, marker } from "../styled-system/css";
 const m = marker("dyn");
-const sel = ":hover";
+const sel = "&:hover";
 export const x = css({ [m(sel).is.ancestor]: "p-4" });
       `.trim(),
     });

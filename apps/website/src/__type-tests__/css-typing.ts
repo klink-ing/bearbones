@@ -41,15 +41,37 @@ css({ "&:focus-within": "p-4" });
 // Array of utility strings under an arbitrary nested selector.
 css({ "&:focus-within": ["p-4", "bg-blue-500"] });
 
-// Marker call form: arbitrary CSS-fragment modifier with explicit relation.
-css({ [cardMarker(":has(.flag-error)").is.ancestor]: "text-red-500" });
+// Marker call form: arbitrary Panda condition value with explicit relation.
+// `&` is mandatory and is substituted with the marker's anchor selector.
+css({ [cardMarker("&:has(.flag-error)").is.ancestor]: "text-red-500" });
 
-// Marker underscore form: typed shortcut against a known pseudo-state with
-// explicit relation.
+// Marker underscore form: typed shortcut against a registered Panda
+// condition with explicit relation. The condition value comes from
+// `panda.config.conditions` (with preset-base defaults plus user
+// extensions) and is substituted into the relation at lower-time.
 css({ [cardMarker._focusVisible.is.descendant]: "text-blue-500" });
 
 // Sibling relation works too.
-css({ [cardMarker(":focus-within").is.sibling]: "text-gray-700" });
+css({ [cardMarker("&:focus-within").is.sibling]: "text-gray-700" });
+
+// Parent-nesting condition value — marker is descendant of state-bearing element.
+css({ [cardMarker("[data-state=open] &").is.descendant]: "text-blue-500" });
+
+// Mixing marker computed-keys with literal CSS properties in one object
+// works: relation types are concrete literal templates parameterized on
+// Id + Cond (no `${string}` widening), so TS preserves them as named
+// property keys instead of collapsing to a string index signature.
+css({
+  [cardMarker("& > *").is.descendant]: "text-red-500",
+  borderWidth: 1,
+});
+
+// Underscore form mixed with sibling property — same property keeps literal
+// inference; TypeScript treats the marker chain key like any other property.
+css({
+  [cardMarker._hover.is.ancestor]: "text-blue-500",
+  padding: "4",
+});
 
 // --- Rejected forms -----------------------------------------------------
 

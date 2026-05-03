@@ -29,6 +29,26 @@ export type BearbonesSystemStyleObject =
 
 type Styles = BearbonesSystemStyleObject | undefined | null | false
 
+export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> {
+  readonly is: {
+    readonly ancestor: \`_bbm_\${Id}_\${Cond}_a &\`;
+    readonly descendant: \`&_bbm_\${Id}_\${Cond}_d\`;
+    readonly sibling: \`&_bbm_\${Id}_\${Cond}_s\`;
+  };
+}
+
+export interface BearbonesMarker<Id extends string = string> {
+  readonly anchor: \`bearbones-marker-\${Id}_\${string}\`;
+  readonly _hover: BearbonesMarkerBuilder<Id, "hover">;
+  readonly _focus: BearbonesMarkerBuilder<Id, "focus">;
+  readonly _focusVisible: BearbonesMarkerBuilder<Id, "focusVisible">;
+  readonly _dark: BearbonesMarkerBuilder<Id, "dark">;
+  <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;
+}
+
+export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;
+
+
 interface CssRawFunction {
   (styles: Styles): SystemStyleObject
   (styles: Styles[]): SystemStyleObject
