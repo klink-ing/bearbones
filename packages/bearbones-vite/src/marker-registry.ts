@@ -94,17 +94,33 @@ export function composeRelationSelectors<T extends string>(m: T): RelationSelect
 }
 
 /**
- * Compose the marker anchor selector (`.bearbones-marker-<id>_<hash>`) from
- * id and hash. The codegen-patch's type emit calls
- * `ReturnType<typeof markerAnchor<Id, "<HASH>">>` to derive the type-level
- * anchor — the runtime substitutes a real 8-hex SHA1 hash, the type uses a
- * fixed `<HASH>` placeholder TypeScript can hold as a literal.
+ * Compose the marker anchor *class name* (no leading `.`) from id and hash.
+ * The codegen-patch's type emit calls
+ * `ReturnType<typeof markerAnchorClass<Id, string>>` to derive the
+ * `BearbonesMarker.anchor` field type, so that the host-visible class name
+ * shape always matches what `describeMarker` produces at runtime — single
+ * source of truth, no manual template duplicated in the type emit.
+ */
+export function markerAnchorClass<Id extends string, Hash extends string>(
+  id: Id,
+  hash: Hash,
+): `bearbones-marker-${Id}_${Hash}` {
+  return `bearbones-marker-${id}_${hash}`;
+}
+
+/**
+ * Compose the marker anchor *selector* (with leading `.`) from id and hash.
+ * Identical to `markerAnchorClass` modulo the leading dot. The codegen-patch
+ * uses `ReturnType<typeof markerAnchor<Id, "<HASH>">>` to derive the
+ * type-level marker observer — runtime substitutes a real 8-hex SHA1 hash,
+ * the type uses a fixed `<HASH>` placeholder TypeScript can hold as a
+ * literal.
  */
 export function markerAnchor<Id extends string, Hash extends string>(
   id: Id,
   hash: Hash,
-): `.bearbones-marker-${Id}_${Hash}` {
-  return `.bearbones-marker-${id}_${hash}`;
+): `.${ReturnType<typeof markerAnchorClass<Id, Hash>>}` {
+  return `.${markerAnchorClass(id, hash)}`;
 }
 
 /**
@@ -114,13 +130,12 @@ export function markerAnchor<Id extends string, Hash extends string>(
  */
 export function describeMarker(id: string, modulePath: string): MarkerDescriptor {
   const hash = shortHash(`${id}::${modulePath}`);
-  const suffix = `${id}_${hash}`;
   return {
     id,
     modulePath,
     hash,
-    suffix,
-    anchorClass: `bearbones-marker-${suffix}`,
+    suffix: `${id}_${hash}`,
+    anchorClass: markerAnchorClass(id, hash),
   };
 }
 

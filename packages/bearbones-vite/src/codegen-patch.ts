@@ -198,7 +198,12 @@ function renderMarkerTypes(conditions: readonly { name: string; value: string }[
     "// evaluation of `marker(...).is.<relation>` matches the runtime emit",
     "// byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't",
     "// compute — we substitute a fixed `<HASH>` literal placeholder there).",
-    "import type { composeRelationSelectors, markerAnchor, substituteAmp } from '@bearbones/vite';",
+    "import type {",
+    "  composeRelationSelectors,",
+    "  markerAnchor,",
+    "  markerAnchorClass,",
+    "  substituteAmp,",
+    "} from '@bearbones/vite';",
     "",
     "/** Anchor selector for the marker; `<HASH>` is the type-level placeholder. */",
     "type BearbonesMarkerAnchor<Id extends string> = ReturnType<",
@@ -215,7 +220,13 @@ function renderMarkerTypes(conditions: readonly { name: string; value: string }[
     "}",
     "",
     "export interface BearbonesMarker<Id extends string = string> {",
-    "  readonly anchor: `bearbones-marker-${Id}_${string}`;",
+    // Anchor class derived from `markerAnchorClass`'s return type so the
+    // host-visible class name shape always matches what `describeMarker`
+    // produces at runtime. The `string` second arg stands in for the
+    // unknown SHA1 hash slot — TypeScript can't compute the hash, so we
+    // intentionally widen here (the consumer reads this as a className
+    // string, not as a computed key, so widening is fine).
+    "  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;",
     ...shortcutLines,
     // Call form: `Cond` is inferred from the literal arg so each distinct
     // call site gets a distinct concrete observer. Non-literal args widen

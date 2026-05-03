@@ -54,9 +54,13 @@ describe("patchCssArtifact", () => {
     // types of `markerAnchor`, `substituteAmp`, and `composeRelationSelectors`
     // in `@bearbones/vite/marker-registry` — single source of truth, no
     // hand-maintained duplicate of the selector shapes in the type emit.
-    expect(patched).toContain(
-      "import type { composeRelationSelectors, markerAnchor, substituteAmp } from '@bearbones/vite';",
-    );
+    expect(patched).toContain("import type {");
+    expect(patched).toContain("composeRelationSelectors,");
+    expect(patched).toContain("markerAnchor,");
+    expect(patched).toContain("markerAnchorClass,");
+    expect(patched).toContain("substituteAmp,");
+    expect(patched).toContain("} from '@bearbones/vite';");
+    expect(patched).toContain("readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;");
     expect(patched).toContain('typeof markerAnchor<Id, "<HASH>">');
     expect(patched).toContain("typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>");
     expect(patched).toContain(

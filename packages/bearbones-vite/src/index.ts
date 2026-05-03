@@ -249,6 +249,7 @@ export {
   composeRelationSelectors,
   describeMarker,
   markerAnchor,
+  markerAnchorClass,
   MARKER_RELATIONS,
   RELATION_SELECTORS,
 } from "./marker-registry.ts";

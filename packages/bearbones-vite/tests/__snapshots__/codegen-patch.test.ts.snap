@@ -34,7 +34,12 @@ type Styles = BearbonesSystemStyleObject | undefined | null | false
 // evaluation of \`marker(...).is.<relation>\` matches the runtime emit
 // byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't
 // compute — we substitute a fixed \`<HASH>\` literal placeholder there).
-import type { composeRelationSelectors, markerAnchor, substituteAmp } from '@bearbones/vite';
+import type {
+  composeRelationSelectors,
+  markerAnchor,
+  markerAnchorClass,
+  substituteAmp,
+} from '@bearbones/vite';
 
 /** Anchor selector for the marker; \`<HASH>\` is the type-level placeholder. */
 type BearbonesMarkerAnchor<Id extends string> = ReturnType<
@@ -51,7 +56,7 @@ export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> 
 }
 
 export interface BearbonesMarker<Id extends string = string> {
-  readonly anchor: \`bearbones-marker-\${Id}_\${string}\`;
+  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;
   readonly _hover: BearbonesMarkerBuilder<Id, "&:is(:hover, [data-hover])">;
   readonly _focus: BearbonesMarkerBuilder<Id, "&:is(:focus, [data-focus])">;
   readonly _focusVisible: BearbonesMarkerBuilder<Id, "&:is(:focus-visible, [data-focus-visible])">;
