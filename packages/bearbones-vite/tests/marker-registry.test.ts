@@ -1,6 +1,11 @@
 import Specificity from "@bramus/specificity";
 import { describe, it, expect } from "vitest";
-import { MARKER_RELATIONS, buildRelationSelector, describeMarker } from "../src/marker-registry.ts";
+import {
+  MARKER_RELATIONS,
+  buildRelationSelector,
+  composeRelationSelectors,
+  describeMarker,
+} from "../src/marker-registry.ts";
 
 describe("describeMarker", () => {
   it("derives a stable suffix and anchor class from `(id, modulePath)`", () => {
@@ -121,5 +126,49 @@ describe("buildRelationSelector", () => {
         }
       });
     }
+  });
+});
+
+describe("composeRelationSelectors", () => {
+  it("preserves the literal selector shape for each relation", () => {
+    const selectors = composeRelationSelectors(".bearbones-marker-card_a27adb16:hover" as const);
+    const expected: {
+      ancestor: ":where(.bearbones-marker-card_a27adb16:hover) &";
+      descendant: "&:where(:has(.bearbones-marker-card_a27adb16:hover))";
+      siblingBefore: ":where(.bearbones-marker-card_a27adb16:hover) ~ &";
+      siblingAfter: "&:where(:has(~ .bearbones-marker-card_a27adb16:hover))";
+      siblingAny: "&:where(:has(~ .bearbones-marker-card_a27adb16:hover)), :where(.bearbones-marker-card_a27adb16:hover) ~ &";
+    } = selectors;
+    const roundTrip: typeof selectors = expected;
+
+    expect(roundTrip).toEqual({
+      ancestor: ":where(.bearbones-marker-card_a27adb16:hover) &",
+      descendant: "&:where(:has(.bearbones-marker-card_a27adb16:hover))",
+      siblingBefore: ":where(.bearbones-marker-card_a27adb16:hover) ~ &",
+      siblingAfter: "&:where(:has(~ .bearbones-marker-card_a27adb16:hover))",
+      siblingAny:
+        "&:where(:has(~ .bearbones-marker-card_a27adb16:hover)), :where(.bearbones-marker-card_a27adb16:hover) ~ &",
+    });
+  });
+});
+
+describe("MARKER_RELATIONS", () => {
+  it("is a precise tuple of the RELATION_SELECTORS keys in declared order", () => {
+    const expected: readonly [
+      "ancestor",
+      "descendant",
+      "siblingBefore",
+      "siblingAfter",
+      "siblingAny",
+    ] = MARKER_RELATIONS;
+    const roundTrip: typeof MARKER_RELATIONS = expected;
+
+    expect(roundTrip).toEqual([
+      "ancestor",
+      "descendant",
+      "siblingBefore",
+      "siblingAfter",
+      "siblingAny",
+    ]);
   });
 });

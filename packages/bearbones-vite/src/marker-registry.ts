@@ -25,41 +25,72 @@ export interface MarkerDescriptor {
   readonly anchorClass: string;
 }
 
-export const MARKER_RELATIONS = [
-  "ancestor",
-  "descendant",
-  "siblingBefore",
-  "siblingAfter",
-  "siblingAny",
-] as const;
-
-export type MarkerRelation = (typeof MARKER_RELATIONS)[number];
+type InterpolateParts<Parts extends readonly string[], T extends string> = Parts extends readonly [
+  infer Only extends string,
+]
+  ? Only
+  : Parts extends readonly [infer Head extends string, ...infer Tail extends readonly string[]]
+    ? `${Head}${T}${InterpolateParts<Tail, T>}`
+    : "";
 
 /**
- * The five raw-selector shapes a marker chain compiles to. The argument is
- * the marker observer — the user's condition value with every `&` already
- * substituted for the marker's anchor class. Each template wraps that
- * observer in `:where(...)` so it contributes zero specificity, mirroring
- * StyleX's `when.*` API. The trailing `&` (or `&:where(...)` self-nesting
- * form) is Panda's placeholder for the styled element — the only specificity
- * contributor in the final rule after Panda's `postcss-nested` flat-emit
- * substitutes `&` for the styled class.
- *
- * Edit this table when adding a relation or tuning a shape; nothing else in
- * the package hardcodes these strings. The transform's inline runtime helper
- * derives its bodies from this same table via `composeRelationSelectors`.
+ * Maps each entry tuple in a tuple of `[name, ...]` entries to its name. The
+ * generic parameter triggers TypeScript's homomorphic-tuple mapping so the
+ * result is a precise tuple of names rather than a generic array.
  */
-export const RELATION_SELECTORS = {
-  ancestor: <T extends string>(m: T) => `:where(${m}) &` as const,
-  descendant: <T extends string>(m: T) => `&:where(:has(${m}))` as const,
-  siblingBefore: <T extends string>(m: T) => `:where(${m}) ~ &` as const,
-  siblingAfter: <T extends string>(m: T) => `&:where(:has(~ ${m}))` as const,
+type EntryNames<Entries extends readonly (readonly [string, ...unknown[]])[]> = {
+  [I in keyof Entries]: Entries[I] extends readonly [infer Name, ...unknown[]] ? Name : never;
+};
+
+/**
+ * The raw-selector shapes a marker chain compiles to, expressed as `(name,
+ * segments)` entries. The segments are the literal text surrounding the marker
+ * observer at each interpolation point — the marker observer is the user's
+ * condition value with every `&` already substituted for the marker's anchor
+ * class. Each template wraps that observer in `:where(...)` so it contributes
+ * zero specificity, mirroring StyleX's `when.*` API. The trailing `&` (or
+ * `&:where(...)` self-nesting form) is Panda's placeholder for the styled
+ * element — the only specificity contributor in the final rule after Panda's
+ * `postcss-nested` flat-emit substitutes `&` for the styled class.
+ *
+ * The entries are written as a tuple so TypeScript preserves declaration
+ * order; both `RELATION_SELECTORS` (the lookup record) and `MARKER_RELATIONS`
+ * (the iteration tuple) are derived from this single source. Edit this table
+ * when adding a relation or tuning a shape; nothing else in the package
+ * hardcodes these strings.
+ */
+const RELATION_SELECTOR_ENTRIES = [
+  ["ancestor", [":where(", ") &"]],
+  ["descendant", ["&:where(:has(", "))"]],
+  ["siblingBefore", [":where(", ") ~ &"]],
+  ["siblingAfter", ["&:where(:has(~ ", "))"]],
   // Comma order is irrelevant to CSS but matters to TypeScript: the
   // template-literal type must satisfy Panda's `AnySelector`
   // (`${string}&` | `&${string}`), so put the `&`-prefixed branch first
   // so the result starts with `&`.
-  siblingAny: <T extends string>(m: T) => `&:where(:has(~ ${m})), :where(${m}) ~ &` as const,
-} as const satisfies Record<MarkerRelation, (m: string) => string>;
+  ["siblingAny", ["&:where(:has(~ ", ")), :where(", ") ~ &"]],
+] as const satisfies readonly (readonly [string, readonly [string, string, ...string[]]])[];
+
+export const RELATION_SELECTORS = Object.fromEntries(RELATION_SELECTOR_ENTRIES) as {
+  [E in (typeof RELATION_SELECTOR_ENTRIES)[number] as E[0]]: E[1];
+};
+
+export const MARKER_RELATIONS = RELATION_SELECTOR_ENTRIES.map(
+  ([name]) => name,
+) as unknown as EntryNames<typeof RELATION_SELECTOR_ENTRIES>;
+
+export type MarkerRelation = (typeof MARKER_RELATIONS)[number];
+
+export type RelationSelectors<T extends string> = {
+  [R in keyof typeof RELATION_SELECTORS]: InterpolateParts<(typeof RELATION_SELECTORS)[R], T>;
+};
+
+function applyRelationSelector<R extends MarkerRelation, T extends string>(
+  relation: R,
+  m: T,
+): RelationSelectors<T>[R] {
+  return RELATION_SELECTORS[relation].join(m) as RelationSelectors<T>[R];
+}
 
 /**
  * Compose all five raw-selector strings for a single substituted observer
@@ -67,10 +98,12 @@ export const RELATION_SELECTORS = {
  * (via the inlined helper the transform prepends to marker-declaring files).
  * Single source of truth for the `is.<relation>` shape.
  */
-export function composeRelationSelectors(m: string): Record<MarkerRelation, string> {
-  const out = {} as Record<MarkerRelation, string>;
-  for (const r of MARKER_RELATIONS) out[r] = RELATION_SELECTORS[r](m);
-  return out;
+export function composeRelationSelectors<T extends string>(m: T): RelationSelectors<T> {
+  const out = {} as Partial<Record<MarkerRelation, string>>;
+  for (const r of MARKER_RELATIONS) {
+    out[r] = applyRelationSelector(r, m);
+  }
+  return out as RelationSelectors<T>;
 }
 
 /**
@@ -129,5 +162,5 @@ export function buildRelationSelector(
     );
   }
   const m = condValue.replaceAll("&", `.${anchorClass}`);
-  return RELATION_SELECTORS[relation](m);
+  return applyRelationSelector(relation, m);
 }
