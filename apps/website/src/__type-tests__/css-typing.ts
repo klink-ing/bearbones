@@ -75,6 +75,60 @@ css({
   padding: "4",
 });
 
+// --- Literal-string evaluation -----------------------------------------
+//
+// Every `is.<relation>` chain evaluates at the *type level* to the exact
+// raw selector string the runtime emits, modulo the marker hash slot
+// (which TypeScript cannot compute — the runtime uses an 8-hex SHA1 of
+// `(id, modulePath)`; the type uses the literal placeholder `<HASH>`).
+//
+// We pin the literal types in both directions to verify the recursive
+// `BearbonesSubstituteAmp` substitution stays concrete and doesn't widen
+// to `${string}` at any point.
+
+// Call form, single `&`.
+const _ancestorCall: ":where(.bearbones-marker-card_<HASH>:has(.flag-error)) &" =
+  cardMarker("&:has(.flag-error)").is.ancestor;
+void _ancestorCall;
+
+// Underscore form picks up the resolved condition value from the conditions
+// stash (preset-base default for `_hover` is `&:is(:hover, [data-hover])`).
+const _ancestorHover: ":where(.bearbones-marker-card_<HASH>:is(:hover, [data-hover])) &" =
+  cardMarker._hover.is.ancestor;
+void _ancestorHover;
+
+// Descendant relation — self-nesting form, `&` at the front.
+const _descendantHover: "&:where(:has(.bearbones-marker-card_<HASH>:is(:hover, [data-hover])))" =
+  cardMarker._hover.is.descendant;
+void _descendantHover;
+
+// Sibling-before, sibling-after, sibling-any — the three new relations.
+const _siblingBefore: ":where(.bearbones-marker-card_<HASH>:focus-within) ~ &" =
+  cardMarker("&:focus-within").is.siblingBefore;
+void _siblingBefore;
+
+const _siblingAfter: "&:where(:has(~ .bearbones-marker-card_<HASH>:focus-within))" =
+  cardMarker("&:focus-within").is.siblingAfter;
+void _siblingAfter;
+
+// Comma-joined two-branch shape. The `&`-prefixed branch comes first so the
+// literal type satisfies Panda's `AnySelector` (`${string}&` | `&${string}`).
+const _siblingAny: "&:where(:has(~ .bearbones-marker-card_<HASH>:focus-within)), :where(.bearbones-marker-card_<HASH>:focus-within) ~ &" =
+  cardMarker("&:focus-within").is.siblingAny;
+void _siblingAny;
+
+// Multi-`&` condition value: every `&` is substituted independently, so the
+// observer contains the anchor twice.
+const _multiAmp: ":where(.foo:has(.bearbones-marker-card_<HASH>) ~ .bearbones-marker-card_<HASH>) &" =
+  cardMarker(".foo:has(&) ~ &").is.ancestor;
+void _multiAmp;
+
+// Parent-nesting condition value (`& :child` style) — substitution leaves
+// the anchor in the leading position rather than the trailing one.
+const _parentNesting: "&:where(:has([data-state=open] .bearbones-marker-card_<HASH>))" =
+  cardMarker("[data-state=open] &").is.descendant;
+void _parentNesting;
+
 // --- Rejected forms -----------------------------------------------------
 
 // Typo'd utility name — `13` is not a Panda spacing token (the scale jumps
