@@ -12,6 +12,12 @@ catalogs:
     '@pandacss/dev':
       specifier: ^1.10.0
       version: 1.10.0
+    '@pandacss/preset-base':
+      specifier: ^1.10.0
+      version: 1.10.0
+    '@pandacss/types':
+      specifier: ^1.10.0
+      version: 1.10.0
     '@types/node':
       specifier: ^24
       version: 24.12.2
@@ -89,7 +95,7 @@ importers:
   packages/bearbones-preset:
     devDependencies:
       '@pandacss/dev':
-        specifier: 1.10.0
+        specifier: 'catalog:'
         version: 1.10.0(typescript@6.0.3)
       '@types/node':
         specifier: 'catalog:'
@@ -120,13 +126,13 @@ importers:
         specifier: 'catalog:'
         version: 2.4.2
       '@pandacss/dev':
-        specifier: 1.10.0
+        specifier: 'catalog:'
         version: 1.10.0(typescript@6.0.3)
       '@pandacss/preset-base':
-        specifier: 1.10.0
+        specifier: 'catalog:'
         version: 1.10.0
       '@pandacss/types':
-        specifier: 1.10.0
+        specifier: 'catalog:'
         version: 1.10.0
       '@types/node':
         specifier: 'catalog:'
