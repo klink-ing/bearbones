@@ -25,25 +25,35 @@ describe("describeMarker", () => {
 describe("buildRelationSelector", () => {
   const anchor = "bearbones-marker-card_a27adb16";
 
-  it("ancestor → `<anchor><modifier> &`", () => {
-    expect(buildRelationSelector(anchor, ":hover", "ancestor")).toBe(`.${anchor}:hover &`);
+  it("ancestor → `M &` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "&:hover", "ancestor")).toBe(`.${anchor}:hover &`);
   });
 
-  it("descendant → `&:has(<anchor><modifier>)`", () => {
-    expect(buildRelationSelector(anchor, "[data-state=open]", "descendant")).toBe(
-      `&:has(.${anchor}[data-state=open])`,
+  it("descendant → `&:has(M)` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "[data-state=open] &", "descendant")).toBe(
+      `&:has([data-state=open] .${anchor})`,
     );
   });
 
-  it("sibling → `& ~ <anchor><modifier>, <anchor><modifier> ~ &`", () => {
-    expect(buildRelationSelector(anchor, ":focus-within", "sibling")).toBe(
+  it("sibling → `& ~ M, M ~ &` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "&:focus-within", "sibling")).toBe(
       `& ~ .${anchor}:focus-within, .${anchor}:focus-within ~ &`,
     );
   });
 
+  it("substitutes every & in the input (global replace)", () => {
+    expect(buildRelationSelector(anchor, ".foo:has(&) ~ &", "ancestor")).toBe(
+      `.foo:has(.${anchor}) ~ .${anchor} &`,
+    );
+  });
+
   it("ends in `&` for ancestor, starts with `&` for descendant + sibling — matches Panda's AnySelector", () => {
-    expect(buildRelationSelector(anchor, ":hover", "ancestor").endsWith(" &")).toBe(true);
-    expect(buildRelationSelector(anchor, ":hover", "descendant").startsWith("&")).toBe(true);
-    expect(buildRelationSelector(anchor, ":hover", "sibling").startsWith("&")).toBe(true);
+    expect(buildRelationSelector(anchor, "&:hover", "ancestor").endsWith(" &")).toBe(true);
+    expect(buildRelationSelector(anchor, "&:hover", "descendant").startsWith("&")).toBe(true);
+    expect(buildRelationSelector(anchor, "&:hover", "sibling").startsWith("&")).toBe(true);
+  });
+
+  it("throws when the condition value lacks the & placeholder", () => {
+    expect(() => buildRelationSelector(anchor, ":hover", "ancestor")).toThrow(/'&' placeholder/);
   });
 });
