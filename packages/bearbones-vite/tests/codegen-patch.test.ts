@@ -17,7 +17,12 @@ const FIXTURE_PATH = join(__dirname, "fixtures", "panda-css.d.ts.txt");
 const FIXTURE_SOURCE = readFileSync(FIXTURE_PATH, "utf8");
 
 const SAMPLE_UTILITIES = ["p-4", "bg-blue-500", "flex"] as const;
-const SAMPLE_CONDITIONS = ["hover", "focus", "focusVisible", "dark"] as const;
+const SAMPLE_CONDITIONS = [
+  { name: "hover", value: "&:is(:hover, [data-hover])" },
+  { name: "focus", value: "&:is(:focus, [data-focus])" },
+  { name: "focusVisible", value: "&:is(:focus-visible, [data-focus-visible])" },
+  { name: "dark", value: ".dark &" },
+] as const;
 
 describe("patchCssArtifact", () => {
   it("injects BearbonesUtilityName, BearbonesNested, BearbonesSystemStyleObject", () => {
@@ -34,20 +39,53 @@ describe("patchCssArtifact", () => {
     expect(patched).toContain("export declare function marker<Id extends string>(id: Id)");
   });
 
-  it("enumerates `_<name>` shortcut on BearbonesMarker for every passed condition", () => {
+  it("enumerates the host's condition vocabulary in a single BearbonesMarkerConditions map", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
-    for (const name of SAMPLE_CONDITIONS) {
-      expect(patched).toContain(`readonly _${name}: BearbonesMarkerBuilder<Id, "${name}">`);
+    expect(patched).toContain("type BearbonesMarkerConditions = {");
+    for (const { name, value } of SAMPLE_CONDITIONS) {
+      expect(patched).toContain(`  readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`);
+    }
+    // The CSS condition strings should NOT be duplicated on per-shortcut
+    // lines; they live exactly once in the BearbonesMarkerConditions map.
+    for (const { value } of SAMPLE_CONDITIONS) {
+      const occurrences = patched.split(JSON.stringify(value)).length - 1;
+      expect(occurrences, `condition ${JSON.stringify(value)} appears ${occurrences} times`).toBe(
+        1,
+      );
     }
   });
 
-  it("emits concrete-literal relation types parameterized on Id and Cond", () => {
+  it("derives _<name> shortcuts via mapped type over BearbonesMarkerConditions", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
-    // Concrete-literal patterns (no bare `${string}`) so computed keys stay
-    // as named properties and don't collapse to a string-index signature.
-    expect(patched).toContain("readonly ancestor: `_bbm_${Id}_${Cond}_a &`");
-    expect(patched).toContain("readonly descendant: `&_bbm_${Id}_${Cond}_d`");
-    expect(patched).toContain("readonly sibling: `&_bbm_${Id}_${Cond}_s`");
+    expect(patched).toContain("type BearbonesMarkerShortcuts<Id extends string> = {");
+    expect(patched).toContain(
+      "readonly [K in keyof BearbonesMarkerConditions as `_${K & string}`]",
+    );
+    expect(patched).toContain("BearbonesMarkerBuilder<");
+    expect(patched).toContain("BearbonesMarkerConditions[K]");
+    expect(patched).toContain(
+      "export interface BearbonesMarker<Id extends string = string>\n  extends BearbonesMarkerShortcuts<Id> {",
+    );
+  });
+
+  it("derives relation types from runtime function return types via ReturnType<typeof ...>", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
+    // The marker observer + relation shape are derived from the return
+    // types of `markerAnchor`, `substituteAmp`, and `composeRelationSelectors`
+    // in `@bearbones/vite/marker-registry` — single source of truth, no
+    // hand-maintained duplicate of the selector shapes in the type emit.
+    expect(patched).toContain("import type {");
+    expect(patched).toContain("composeRelationSelectors,");
+    expect(patched).toContain("markerAnchor,");
+    expect(patched).toContain("markerAnchorClass,");
+    expect(patched).toContain("substituteAmp,");
+    expect(patched).toContain("} from '@bearbones/vite';");
+    expect(patched).toContain("readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;");
+    expect(patched).toContain('typeof markerAnchor<Id, "<HASH>">');
+    expect(patched).toContain("typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>");
+    expect(patched).toContain(
+      "readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;",
+    );
   });
 
   it("emits a generic call form so literal condValue args produce concrete chain types", () => {

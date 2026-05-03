@@ -238,6 +238,32 @@ export { transform } from "./transform.ts";
 // Expose the codegen patch helpers for tests / advanced wiring.
 export { patchCssArtifact, patchCssRuntime, patchArtifacts } from "./codegen-patch.ts";
 export type { PandaArtifact, PandaArtifactFile } from "./codegen-patch.ts";
+// Marker primitives. The codegen-patch's emitted `BearbonesMarkerBuilder`
+// types are derived from the return types of these functions so the
+// type-level evaluation matches the runtime emit byte-for-byte (modulo the
+// build-time hash, which TypeScript can't compute and substitutes with a
+// fixed `<HASH>` placeholder).
+export {
+  applyRelationSelector,
+  buildRelationSelector,
+  composeRelationSelectors,
+  describeMarker,
+  markerAnchor,
+  markerAnchorClass,
+  MARKER_RELATIONS,
+  RELATION_SELECTORS,
+} from "./marker-registry.ts";
+export type { MarkerDescriptor, MarkerRelation, RelationSelectors } from "./marker-registry.ts";
+
+// Re-export the generic TS utilities from the private `@bearbones/utils`
+// workspace package so the codegen-patch's emitted host import
+// (`from '@bearbones/vite'`) keeps working without the host needing to
+// install `@bearbones/utils` (which never publishes). The runtime + types
+// are inlined into this dist via `deps.alwaysBundle` in `vite.config.ts`,
+// and `@bearbones/utils#build` runs before this package's build (see
+// `run.tasks.build.dependsOn`).
+export { substituteAmp } from "@bearbones/utils";
+export type { SubstituteAmp } from "@bearbones/utils";
 
 // NOTE: `BearbonesUtilityName` is no longer re-exported as a static type.
 // The set of valid utility names is now derived from the host project's

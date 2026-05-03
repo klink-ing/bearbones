@@ -30,9 +30,10 @@ css({ _hover: ["bg-blue-500", "text-white"] });
 css({ _hover: { padding: "8" } });
 
 // Bearbones marker relational condition key — typed shortcut form. The
-// `_hover` builder yields `.is.{ancestor,descendant,sibling}`; each lands as
-// a literal condition key registered by the prescan into Panda's Conditions
-// interface.
+// `_hover` builder yields `.is.{ancestor,descendant,siblingBefore,siblingAfter,siblingAny}`;
+// each lands as a `:where(...)`-wrapped raw selector matching StyleX's
+// `when.*` specificity contract (the marker observation contributes 0; only
+// the styled element's own class counts).
 css({ [cardMarker._hover.is.ancestor]: "text-blue-500" });
 
 // Utility string under an arbitrary nested selector.
@@ -51,8 +52,9 @@ css({ [cardMarker("&:has(.flag-error)").is.ancestor]: "text-red-500" });
 // extensions) and is substituted into the relation at lower-time.
 css({ [cardMarker._focusVisible.is.descendant]: "text-blue-500" });
 
-// Sibling relation works too.
-css({ [cardMarker("&:focus-within").is.sibling]: "text-gray-700" });
+// Any-sibling relation works too — the comma-joined StyleX-style shape that
+// matches both directions of sibling relationship.
+css({ [cardMarker("&:focus-within").is.siblingAny]: "text-gray-700" });
 
 // Parent-nesting condition value — marker is descendant of state-bearing element.
 css({ [cardMarker("[data-state=open] &").is.descendant]: "text-blue-500" });
@@ -72,6 +74,60 @@ css({
   [cardMarker._hover.is.ancestor]: "text-blue-500",
   padding: "4",
 });
+
+// --- Literal-string evaluation -----------------------------------------
+//
+// Every `is.<relation>` chain evaluates at the *type level* to the exact
+// raw selector string the runtime emits, modulo the marker hash slot
+// (which TypeScript cannot compute — the runtime uses an 8-hex SHA1 of
+// `(id, modulePath)`; the type uses the literal placeholder `<HASH>`).
+//
+// We pin the literal types in both directions to verify the recursive
+// `BearbonesSubstituteAmp` substitution stays concrete and doesn't widen
+// to `${string}` at any point.
+
+// Call form, single `&`.
+const _ancestorCall: ":where(.bearbones-marker-card_<HASH>:has(.flag-error)) &" =
+  cardMarker("&:has(.flag-error)").is.ancestor;
+void _ancestorCall;
+
+// Underscore form picks up the resolved condition value from the conditions
+// stash (preset-base default for `_hover` is `&:is(:hover, [data-hover])`).
+const _ancestorHover: ":where(.bearbones-marker-card_<HASH>:is(:hover, [data-hover])) &" =
+  cardMarker._hover.is.ancestor;
+void _ancestorHover;
+
+// Descendant relation — self-nesting form, `&` at the front.
+const _descendantHover: "&:where(:has(.bearbones-marker-card_<HASH>:is(:hover, [data-hover])))" =
+  cardMarker._hover.is.descendant;
+void _descendantHover;
+
+// Sibling-before, sibling-after, sibling-any — the three new relations.
+const _siblingBefore: ":where(.bearbones-marker-card_<HASH>:focus-within) ~ &" =
+  cardMarker("&:focus-within").is.siblingBefore;
+void _siblingBefore;
+
+const _siblingAfter: "&:where(:has(~ .bearbones-marker-card_<HASH>:focus-within))" =
+  cardMarker("&:focus-within").is.siblingAfter;
+void _siblingAfter;
+
+// Comma-joined two-branch shape. The `&`-prefixed branch comes first so the
+// literal type satisfies Panda's `AnySelector` (`${string}&` | `&${string}`).
+const _siblingAny: "&:where(:has(~ .bearbones-marker-card_<HASH>:focus-within)), :where(.bearbones-marker-card_<HASH>:focus-within) ~ &" =
+  cardMarker("&:focus-within").is.siblingAny;
+void _siblingAny;
+
+// Multi-`&` condition value: every `&` is substituted independently, so the
+// observer contains the anchor twice.
+const _multiAmp: ":where(.foo:has(.bearbones-marker-card_<HASH>) ~ .bearbones-marker-card_<HASH>) &" =
+  cardMarker(".foo:has(&) ~ &").is.ancestor;
+void _multiAmp;
+
+// Parent-nesting condition value (`& :child` style) — substitution leaves
+// the anchor in the leading position rather than the trailing one.
+const _parentNesting: "&:where(:has([data-state=open] .bearbones-marker-card_<HASH>))" =
+  cardMarker("[data-state=open] &").is.descendant;
+void _parentNesting;
 
 // --- Rejected forms -----------------------------------------------------
 

@@ -26,6 +26,7 @@ export function Demo() {
         <h2
           className={css("text-lg", "font-bold", {
             [cardMarker._hover.is.ancestor]: "text-blue-500",
+            [cardMarker("&:hover").is.siblingAny]: "text-blue-500",
           })}
         >
           Card title

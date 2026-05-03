@@ -88,7 +88,7 @@ export const cardMarker = marker("card");
     expect(result.content).toBeDefined();
     expect(result.content).toContain('anchor: "bearbones-marker-card_');
     expect(result.content).toMatch(
-      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+      /_hover: \{ is: \{ ancestor: ":where\(\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\)\) &"/,
     );
   });
 
@@ -142,7 +142,7 @@ export const x = css({ [cardMarker._hover.is.ancestor]: "bg-blue-500" });
     expect(result.content).toBeDefined();
     // The computed key should resolve to the composed raw selector.
     expect(result.content).toMatch(
-      /"\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &":\{"bg":"blue\.500"\}/,
+      /":where\(\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\)\) &":\{"bg":"blue\.500"\}/,
     );
   });
 
@@ -187,14 +187,14 @@ export const cardMarker = marker("card");
     );
     // Underscore builder forms are emitted with literal raw-selector strings.
     expect(result.content).toMatch(
-      /_hover: \{ is: \{ ancestor: "\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\) &"/,
+      /_hover: \{ is: \{ ancestor: ":where\(\.bearbones-marker-card_[0-9a-f]{8}:is\(:hover, \[data-hover\]\)\) &"/,
     );
     // No legacy condition-name string lurking on the record.
     expect(result.content).not.toMatch(/hover: "_markerHover_card_/);
     expect(result.content).not.toMatch(/_marker_card_[0-9a-f]{8}_ancestor_/);
   });
 
-  it("lowers marker('&:has(.error)').is.ancestor to a raw selector key (call form, & substituted)", () => {
+  it("lowers marker('&:has(.error)').is.ancestor to a `:where(M) &` raw selector key", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
@@ -205,11 +205,11 @@ export const x = css({ [m("&:has(.error)").is.ancestor]: "p-4" });
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"\.bearbones-marker-container_[0-9a-f]{8}:has\(\.error\) &":\{"p":"4"\}/,
+      /":where\(\.bearbones-marker-container_[0-9a-f]{8}:has\(\.error\)\) &":\{"p":"4"\}/,
     );
   });
 
-  it("lowers marker._<name>.is.descendant to a `&:has(...)` raw selector key", () => {
+  it("lowers marker._<name>.is.descendant to a `&:where(:has(M))` raw selector key", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
@@ -220,22 +220,52 @@ export const x = css({ [m._focusVisible.is.descendant]: "p-4" });
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"&:has\(\.bearbones-marker-panel_[0-9a-f]{8}:is\(:focus-visible, \[data-focus-visible\]\)\)":\{"p":"4"\}/,
+      /"&:where\(:has\(\.bearbones-marker-panel_[0-9a-f]{8}:is\(:focus-visible, \[data-focus-visible\]\)\)\)":\{"p":"4"\}/,
     );
   });
 
-  it("lowers .is.sibling to the comma-joined raw selector form", () => {
+  it("lowers .is.siblingBefore to a `:where(M) ~ &` raw selector key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css, marker } from "../styled-system/css";
+const m = marker("g");
+export const x = css({ [m("&:focus-within").is.siblingBefore]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /":where\(\.bearbones-marker-g_[0-9a-f]{8}:focus-within\) ~ &":\{"p":"4"\}/,
+    );
+  });
+
+  it("lowers .is.siblingAfter to a `&:where(:has(~ M))` raw selector key", () => {
+    const result = transform({
+      filePath: "/virtual/file.tsx",
+      source: `
+import { css, marker } from "../styled-system/css";
+const m = marker("g");
+export const x = css({ [m("&:focus-within").is.siblingAfter]: "p-4" });
+      `.trim(),
+    });
+    expect(result.content).toBeDefined();
+    expect(result.content).toMatch(
+      /"&:where\(:has\(~ \.bearbones-marker-g_[0-9a-f]{8}:focus-within\)\)":\{"p":"4"\}/,
+    );
+  });
+
+  it("lowers .is.siblingAny to the comma-joined `&:where(:has(~ M)), :where(M) ~ &` form", () => {
     const result = transform({
       filePath: "/virtual/file.tsx",
       source: `
 import { css, marker } from "../styled-system/css";
 const m = marker("group");
-export const x = css({ [m("&:focus-within").is.sibling]: "p-4" });
+export const x = css({ [m("&:focus-within").is.siblingAny]: "p-4" });
       `.trim(),
     });
     expect(result.content).toBeDefined();
     expect(result.content).toMatch(
-      /"& ~ \.bearbones-marker-group_[0-9a-f]{8}:focus-within, \.bearbones-marker-group_[0-9a-f]{8}:focus-within ~ &":\{"p":"4"\}/,
+      /"&:where\(:has\(~ \.bearbones-marker-group_[0-9a-f]{8}:focus-within\)\), :where\(\.bearbones-marker-group_[0-9a-f]{8}:focus-within\) ~ &":\{"p":"4"\}/,
     );
   });
 
@@ -255,7 +285,7 @@ export const x = css({
     expect(anchorMatch).not.toBeNull();
     const suffix = anchorMatch![1];
     expect(result.content).toContain(
-      `".bearbones-marker-widget_${suffix}:has(.error) &":{"p":"4"}`,
+      `":where(.bearbones-marker-widget_${suffix}:has(.error)) &":{"p":"4"}`,
     );
   });
 
@@ -272,9 +302,10 @@ export const x = css({ [m("[data-state=open] &").is.descendant]: "p-4" });
     // Marker is the descendant of [data-state=open]; the styled element has
     // the marker as a descendant of itself. Both `&` placeholders in the
     // input refer to the marker; the wrapped relation re-introduces a
-    // trailing `&` for the styled element.
+    // self-nesting `&:where(:has(...))` for the styled element with the
+    // marker observation specificity-neutralized inside `:where()`.
     expect(result.content).toMatch(
-      /"&:has\(\[data-state=open\] \.bearbones-marker-card_[0-9a-f]{8}\)":\{"p":"4"\}/,
+      /"&:where\(:has\(\[data-state=open\] \.bearbones-marker-card_[0-9a-f]{8}\)\)":\{"p":"4"\}/,
     );
   });
 
@@ -284,7 +315,7 @@ export const x = css({ [m("[data-state=open] &").is.descendant]: "p-4" });
       source: `
 import { css, marker } from "../styled-system/css";
 const m = marker("card");
-export const x = css({ [m(".foo:has(&) ~ &").is.sibling]: "p-4" });
+export const x = css({ [m(".foo:has(&) ~ &").is.siblingAny]: "p-4" });
       `.trim(),
     });
     expect(result.content).toBeDefined();

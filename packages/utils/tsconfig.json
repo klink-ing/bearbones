@@ -9,12 +9,12 @@
     "types": ["node"],
     "strict": true,
     "noUnusedLocals": true,
-    "declaration": true,
-    "noEmit": true,
     "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true,
+    "declaration": true
   }
 }

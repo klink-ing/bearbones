@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
+import { deepAssign } from "@bearbones/utils";
 import { resolveUtility, type StyleFragment } from "./utility-map.ts";
 import { getCondition, listConditionsWithAnchor } from "./conditions-stash.ts";
 import {
   MARKER_RELATIONS,
+  RELATION_SELECTORS,
   buildRelationSelector,
   describeMarker,
   type MarkerDescriptor,
@@ -275,29 +277,6 @@ function lowerValue(node: any, markers: MarkerCallContext): unknown {
 }
 
 /**
- * Deep-merge two style fragments. Later writes win at property leaves but
- * nested condition objects are merged recursively so ordering of fragments
- * matches Panda's own multi-arg `css()` semantics.
- */
-function deepAssign(target: StyleFragment, source: StyleFragment): void {
-  for (const [k, v] of Object.entries(source)) {
-    const existing = target[k];
-    if (
-      existing != null &&
-      typeof existing === "object" &&
-      !Array.isArray(existing) &&
-      v != null &&
-      typeof v === "object" &&
-      !Array.isArray(v)
-    ) {
-      deepAssign(existing as StyleFragment, v as StyleFragment);
-    } else {
-      target[k] = v;
-    }
-  }
-}
-
-/**
  * Per-call binding context: which `marker(...)` declarations are visible at
  * each call site. Includes both local declarations and imports from other
  * files (which get pre-resolved by reading the imported source on demand).
@@ -462,20 +441,33 @@ function processMarkerDeclarations(
 }
 
 /**
- * Inline runtime helper. Composes the three raw-selector strings for a
+ * Inline runtime helper. Composes the five raw-selector strings for a
  * `(condValue, anchorClass)` pair so variable-bound chains (e.g.
  * `const k = m('&:hover').is.ancestor`) work at runtime. Substitutes every
- * `&` in the input with the marker's anchor selector, then wraps in the
- * relation. Byte-for-byte identical to `buildRelationSelector` in
- * `marker-registry.ts`.
+ * `&` in the input with the marker's anchor selector, then runs the
+ * `RELATION_SELECTORS` templates against the result.
+ *
+ * The body is *derived* from `RELATION_SELECTORS` at build time (see
+ * `buildRelationsHelperBody`), so the runtime path stays byte-identical to
+ * `buildRelationSelector` in `marker-registry.ts` — no second copy of the
+ * selector shapes maintained by hand.
  *
  * Emitted once per file that declares any marker. The synthesized marker
  * record closes over this constant via a normal lexical reference.
  */
 const RELATIONS_HELPER_NAME = "__bearbones_relations";
+
+function buildRelationsHelperBody(): string {
+  const entries = Object.entries(RELATION_SELECTORS).map(([relation, parts]) => {
+    const expr = parts.map((p) => JSON.stringify(p)).join(" + m + ");
+    return `${relation}: ${expr}`;
+  });
+  return `{ is: { ${entries.join(", ")} } }`;
+}
+
 const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (c, a) => {
   const m = c.split("&").join("." + a);
-  return { is: { ancestor: m + " &", descendant: "&:has(" + m + ")", sibling: "& ~ " + m + ", " + m + " ~ &" } };
+  return ${buildRelationsHelperBody()};
 };`;
 
 function renderMarkerRecord(marker: MarkerDescriptor): string {
@@ -486,12 +478,11 @@ function renderMarkerRecord(marker: MarkerDescriptor): string {
   // by the time `parser:before` runs (where this transform fires), the stash
   // reflects the user's full vocabulary including any extensions.
   for (const { name, value } of listConditionsWithAnchor()) {
-    const ancestor = buildRelationSelector(marker.anchorClass, value, "ancestor");
-    const descendant = buildRelationSelector(marker.anchorClass, value, "descendant");
-    const sibling = buildRelationSelector(marker.anchorClass, value, "sibling");
-    fields.push(
-      `_${name}: { is: { ancestor: ${JSON.stringify(ancestor)}, descendant: ${JSON.stringify(descendant)}, sibling: ${JSON.stringify(sibling)} } }`,
-    );
+    const isEntries = MARKER_RELATIONS.map((relation) => {
+      const sel = buildRelationSelector(marker.anchorClass, value, relation);
+      return `${relation}: ${JSON.stringify(sel)}`;
+    });
+    fields.push(`_${name}: { is: { ${isEntries.join(", ")} } }`);
   }
   return `Object.assign((c) => ${RELATIONS_HELPER_NAME}(c, ${JSON.stringify(marker.anchorClass)}), { ${fields.join(", ")} })`;
 }

@@ -51,7 +51,7 @@ const RUNTIME_PATCH_SENTINEL = "/* @bearbones/vite: marker stub */";
 export function patchCssArtifact(
   source: string,
   utilityNames: readonly string[],
-  conditionNames: readonly string[],
+  conditions: readonly { name: string; value: string }[],
 ): string {
   if (!source.includes(STYLES_ANCHOR)) {
     throw new Error(
@@ -65,7 +65,7 @@ export function patchCssArtifact(
 
   const utilityUnion = renderUtilityUnion(utilityNames);
   const injectedTypes = renderInjectedTypes(utilityUnion);
-  const markerTypes = renderMarkerTypes(conditionNames);
+  const markerTypes = renderMarkerTypes(conditions);
   const patchedStyles = "type Styles = BearbonesSystemStyleObject | undefined | null | false";
 
   const importBlock = renderImportBlock();
@@ -117,8 +117,7 @@ export function patchCssRuntime(source: string): string {
  * pass fixed inputs to keep snapshots stable.
  */
 export function patchCssArtifactLive(source: string): string {
-  const conditionNames = listConditionsWithAnchor().map(({ name }) => name);
-  return patchCssArtifact(source, listUtilities(), conditionNames);
+  return patchCssArtifact(source, listUtilities(), listConditionsWithAnchor());
 }
 
 function renderUtilityUnion(names: readonly string[]): string {
@@ -167,58 +166,107 @@ function renderInjectedTypes(utilityUnion: string): string {
  * `conditions-stash.ts`); the type emit only sees keys that compose into a
  * relational marker query.
  *
- * Relation result types are *concrete literal* template strings parameterized
- * over `Id` and the condition name `Cond` — never just `${string}` widening.
- * That matters because TypeScript collapses computed property keys whose type
- * is a wide template-literal type (`${string}&`) into a string-index signature
- * on the enclosing object, which then conflicts with Panda's narrow indexes
- * the moment a sibling literal property (`borderWidth: 1`, etc.) is added.
+ * Relation result types are *real selector shapes* — `:where(<observer>) &`
+ * for ancestor, etc. — with the `<observer>` slot computed by recursively
+ * substituting every `&` in the condition value with the marker's anchor
+ * selector. The five relations match StyleX's `when.*` API and produce
+ * specificity (0,1,0) at runtime: only the styled element's own class
+ * counts, not the marker observation.
  *
- * Concrete literals (`_bbm_${Id}_${Cond}_a &`) sidestep the collapse: TS
- * keeps them as named property keys when used as computed keys, so mixing
- * marker rules with sibling CSS properties in one `css({...})` argument
- * type-checks. The concrete strings still satisfy `AnySelector` (each ends
- * with ` &` or starts with `&`), so they're accepted as keys in
- * `BearbonesNestedObject<P>` via the `[K in AnySelector]?` index. The runtime
- * transform substitutes the real raw selector at parser:before time — TS
- * never sees the runtime string, only this phantom placeholder.
+ * The hash slot in the anchor (`.bearbones-marker-${Id}_<HASH>`) is a fixed
+ * literal placeholder. TypeScript can't compute the runtime SHA1 hash, so
+ * the type-level selector and runtime selector match in shape but differ
+ * in that one slot. Keeping the hash as a literal placeholder (rather than
+ * `${string}`) is what lets these computed-key types survive in `css({...})`
+ * arguments without collapsing into a string-index signature on the
+ * enclosing object — a collapse that would conflict with Panda's narrow
+ * property indexes the moment a sibling literal property is added.
+ *
+ * The fully-resolved selectors satisfy `AnySelector` (each contains `&`),
+ * so they're accepted as keys in `BearbonesNestedObject<P>` via the
+ * `[K in AnySelector]?` index. The runtime transform substitutes the real
+ * hashed selector at parser:before time.
  */
-function renderMarkerTypes(conditionNames: readonly string[]): string {
-  const shortcutLines = conditionNames.map(
-    (name) =>
-      `  readonly ${quoteIdentifierIfNeeded(`_${name}`)}: BearbonesMarkerBuilder<Id, ${JSON.stringify(name)}>;`,
+function renderMarkerTypes(conditions: readonly { name: string; value: string }[]): string {
+  // Single source of truth for the host's condition vocabulary, emitted as a
+  // typed object literal type. The `_<name>` shortcuts on `BearbonesMarker`
+  // are then derived from this map via a mapped type — the literal CSS
+  // condition strings appear exactly once instead of being repeated on each
+  // shortcut line.
+  const conditionLines = conditions.map(
+    ({ name, value }) => `  readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`,
   );
   return [
+    "// Marker selector shapes are derived from the return types of the runtime",
+    "// functions in `@bearbones/vite/marker-registry`, so the type-level",
+    "// evaluation of `marker(...).is.<relation>` matches the runtime emit",
+    "// byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't",
+    "// compute — we substitute a fixed `<HASH>` literal placeholder there).",
+    "import type {",
+    "  composeRelationSelectors,",
+    "  markerAnchor,",
+    "  markerAnchorClass,",
+    "  substituteAmp,",
+    "} from '@bearbones/vite';",
+    "",
+    "/** Anchor selector for the marker; `<HASH>` is the type-level placeholder. */",
+    "type BearbonesMarkerAnchor<Id extends string> = ReturnType<",
+    '  typeof markerAnchor<Id, "<HASH>">',
+    ">;",
+    "",
+    "/** Marker observation: condition value with every `&` substituted for the anchor. */",
+    "type BearbonesObserver<Id extends string, Cond extends string> = ReturnType<",
+    "  typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>",
+    ">;",
+    "",
     "export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> {",
-    "  readonly is: {",
-    "    readonly ancestor: `_bbm_${Id}_${Cond}_a &`;",
-    "    readonly descendant: `&_bbm_${Id}_${Cond}_d`;",
-    "    readonly sibling: `&_bbm_${Id}_${Cond}_s`;",
-    "  };",
+    "  readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;",
     "}",
     "",
-    "export interface BearbonesMarker<Id extends string = string> {",
-    "  readonly anchor: `bearbones-marker-${Id}_${string}`;",
-    ...shortcutLines,
+    "/**",
+    " * The host project's condition vocabulary as a typed map. Each entry's",
+    " * value is the resolved Panda condition selector — the same string the",
+    " * runtime conditions stash holds. Single source of truth for the",
+    " * `BearbonesMarker._<name>` shortcuts; do not duplicate these strings",
+    " * elsewhere in the type emit.",
+    " */",
+    "type BearbonesMarkerConditions = {",
+    ...conditionLines,
+    "};",
+    "",
+    "/**",
+    " * Mapped type that turns each condition entry into a typed `_<name>`",
+    " * shortcut on the marker. The `Cond` parameter is the entry's value, so",
+    " * `BearbonesMarkerBuilder` resolves to a relation selector observing the",
+    " * exact runtime condition.",
+    " */",
+    "type BearbonesMarkerShortcuts<Id extends string> = {",
+    "  readonly [K in keyof BearbonesMarkerConditions as `_${K & string}`]: BearbonesMarkerBuilder<",
+    "    Id,",
+    "    BearbonesMarkerConditions[K]",
+    "  >;",
+    "};",
+    "",
+    "export interface BearbonesMarker<Id extends string = string>",
+    "  extends BearbonesMarkerShortcuts<Id> {",
+    // Anchor class derived from `markerAnchorClass`'s return type so the
+    // host-visible class name shape always matches what `describeMarker`
+    // produces at runtime. The `string` second arg stands in for the
+    // unknown SHA1 hash slot — TypeScript can't compute the hash, so we
+    // intentionally widen here (the consumer reads this as a className
+    // string, not as a computed key, so widening is fine).
+    "  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;",
     // Call form: `Cond` is inferred from the literal arg so each distinct
-    // call site gets a distinct phantom literal. Non-literal args widen to
-    // `string` and collapse — that aligns with the runtime contract since
-    // the lowering transform only resolves literal arguments anyway.
+    // call site gets a distinct concrete observer. Non-literal args widen
+    // to `string` and the resulting selector type loses concreteness —
+    // that aligns with the runtime contract since the lowering transform
+    // only resolves literal arguments anyway.
     "  <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;",
     "}",
     "",
     "export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;",
     "",
   ].join("\n");
-}
-
-/**
- * Property-key syntax helper. JS identifiers don't allow `-` or other punctuation,
- * so condition names like `my-cond` produce property keys that need quoting.
- */
-function quoteIdentifierIfNeeded(name: string): string {
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) return name;
-  return JSON.stringify(name);
 }
 
 /**
