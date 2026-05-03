@@ -39,13 +39,33 @@ describe("patchCssArtifact", () => {
     expect(patched).toContain("export declare function marker<Id extends string>(id: Id)");
   });
 
-  it("enumerates `_<name>` shortcut with the resolved condition VALUE as Cond parameter", () => {
+  it("enumerates the host's condition vocabulary in a single BearbonesMarkerConditions map", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
+    expect(patched).toContain("type BearbonesMarkerConditions = {");
     for (const { name, value } of SAMPLE_CONDITIONS) {
-      expect(patched).toContain(
-        `readonly _${name}: BearbonesMarkerBuilder<Id, ${JSON.stringify(value)}>`,
+      expect(patched).toContain(`  readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`);
+    }
+    // The CSS condition strings should NOT be duplicated on per-shortcut
+    // lines; they live exactly once in the BearbonesMarkerConditions map.
+    for (const { value } of SAMPLE_CONDITIONS) {
+      const occurrences = patched.split(JSON.stringify(value)).length - 1;
+      expect(occurrences, `condition ${JSON.stringify(value)} appears ${occurrences} times`).toBe(
+        1,
       );
     }
+  });
+
+  it("derives _<name> shortcuts via mapped type over BearbonesMarkerConditions", () => {
+    const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
+    expect(patched).toContain("type BearbonesMarkerShortcuts<Id extends string> = {");
+    expect(patched).toContain(
+      "readonly [K in keyof BearbonesMarkerConditions as `_${K & string}`]",
+    );
+    expect(patched).toContain("BearbonesMarkerBuilder<");
+    expect(patched).toContain("BearbonesMarkerConditions[K]");
+    expect(patched).toContain(
+      "export interface BearbonesMarker<Id extends string = string>\n  extends BearbonesMarkerShortcuts<Id> {",
+    );
   });
 
   it("derives relation types from runtime function return types via ReturnType<typeof ...>", () => {

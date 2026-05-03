@@ -188,9 +188,13 @@ function renderInjectedTypes(utilityUnion: string): string {
  * hashed selector at parser:before time.
  */
 function renderMarkerTypes(conditions: readonly { name: string; value: string }[]): string {
-  const shortcutLines = conditions.map(
-    ({ name, value }) =>
-      `  readonly ${quoteIdentifierIfNeeded(`_${name}`)}: BearbonesMarkerBuilder<Id, ${JSON.stringify(value)}>;`,
+  // Single source of truth for the host's condition vocabulary, emitted as a
+  // typed object literal type. The `_<name>` shortcuts on `BearbonesMarker`
+  // are then derived from this map via a mapped type — the literal CSS
+  // condition strings appear exactly once instead of being repeated on each
+  // shortcut line.
+  const conditionLines = conditions.map(
+    ({ name, value }) => `  readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`,
   );
   return [
     "// Marker selector shapes are derived from the return types of the runtime",
@@ -219,7 +223,32 @@ function renderMarkerTypes(conditions: readonly { name: string; value: string }[
     "  readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;",
     "}",
     "",
-    "export interface BearbonesMarker<Id extends string = string> {",
+    "/**",
+    " * The host project's condition vocabulary as a typed map. Each entry's",
+    " * value is the resolved Panda condition selector — the same string the",
+    " * runtime conditions stash holds. Single source of truth for the",
+    " * `BearbonesMarker._<name>` shortcuts; do not duplicate these strings",
+    " * elsewhere in the type emit.",
+    " */",
+    "type BearbonesMarkerConditions = {",
+    ...conditionLines,
+    "};",
+    "",
+    "/**",
+    " * Mapped type that turns each condition entry into a typed `_<name>`",
+    " * shortcut on the marker. The `Cond` parameter is the entry's value, so",
+    " * `BearbonesMarkerBuilder` resolves to a relation selector observing the",
+    " * exact runtime condition.",
+    " */",
+    "type BearbonesMarkerShortcuts<Id extends string> = {",
+    "  readonly [K in keyof BearbonesMarkerConditions as `_${K & string}`]: BearbonesMarkerBuilder<",
+    "    Id,",
+    "    BearbonesMarkerConditions[K]",
+    "  >;",
+    "};",
+    "",
+    "export interface BearbonesMarker<Id extends string = string>",
+    "  extends BearbonesMarkerShortcuts<Id> {",
     // Anchor class derived from `markerAnchorClass`'s return type so the
     // host-visible class name shape always matches what `describeMarker`
     // produces at runtime. The `string` second arg stands in for the
@@ -227,7 +256,6 @@ function renderMarkerTypes(conditions: readonly { name: string; value: string }[
     // intentionally widen here (the consumer reads this as a className
     // string, not as a computed key, so widening is fine).
     "  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;",
-    ...shortcutLines,
     // Call form: `Cond` is inferred from the literal arg so each distinct
     // call site gets a distinct concrete observer. Non-literal args widen
     // to `string` and the resulting selector type loses concreteness —
@@ -239,15 +267,6 @@ function renderMarkerTypes(conditions: readonly { name: string; value: string }[
     "export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;",
     "",
   ].join("\n");
-}
-
-/**
- * Property-key syntax helper. JS identifiers don't allow `-` or other punctuation,
- * so condition names like `my-cond` produce property keys that need quoting.
- */
-function quoteIdentifierIfNeeded(name: string): string {
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) return name;
-  return JSON.stringify(name);
 }
 
 /**
