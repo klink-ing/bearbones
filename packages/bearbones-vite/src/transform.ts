@@ -479,19 +479,9 @@ function processMarkerDeclarations(
  */
 const RELATIONS_HELPER_NAME = "__bearbones_relations";
 
-/**
- * Sentinel substituted into each relation template at build time, then split
- * out of the resulting string to recover the literal-text fragments around
- * the observer slot. The fragments are re-emitted as JS string-concatenation
- * with the runtime `m` variable in between.
- */
-const HELPER_SENTINEL = " __BBM_OBSERVER__ ";
-
 function buildRelationsHelperBody(): string {
-  const entries = MARKER_RELATIONS.map((relation) => {
-    const filled = RELATION_SELECTORS[relation](HELPER_SENTINEL);
-    const fragments = filled.split(HELPER_SENTINEL);
-    const expr = fragments.map((f) => JSON.stringify(f)).join(" + m + ");
+  const entries = Object.entries(RELATION_SELECTORS).map(([relation, parts]) => {
+    const expr = parts.map((p) => JSON.stringify(p)).join(" + m + ");
     return `${relation}: ${expr}`;
   });
   return `{ is: { ${entries.join(", ")} } }`;
