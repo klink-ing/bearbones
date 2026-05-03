@@ -30,9 +30,10 @@ css({ _hover: ["bg-blue-500", "text-white"] });
 css({ _hover: { padding: "8" } });
 
 // Bearbones marker relational condition key — typed shortcut form. The
-// `_hover` builder yields `.is.{ancestor,descendant,sibling}`; each lands as
-// a literal condition key registered by the prescan into Panda's Conditions
-// interface.
+// `_hover` builder yields `.is.{ancestor,descendant,siblingBefore,siblingAfter,siblingAny}`;
+// each lands as a `:where(...)`-wrapped raw selector matching StyleX's
+// `when.*` specificity contract (the marker observation contributes 0; only
+// the styled element's own class counts).
 css({ [cardMarker._hover.is.ancestor]: "text-blue-500" });
 
 // Utility string under an arbitrary nested selector.
@@ -51,8 +52,9 @@ css({ [cardMarker("&:has(.flag-error)").is.ancestor]: "text-red-500" });
 // extensions) and is substituted into the relation at lower-time.
 css({ [cardMarker._focusVisible.is.descendant]: "text-blue-500" });
 
-// Sibling relation works too.
-css({ [cardMarker("&:focus-within").is.sibling]: "text-gray-700" });
+// Any-sibling relation works too — the comma-joined StyleX-style shape that
+// matches both directions of sibling relationship.
+css({ [cardMarker("&:focus-within").is.siblingAny]: "text-gray-700" });
 
 // Parent-nesting condition value — marker is descendant of state-bearing element.
 css({ [cardMarker("[data-state=open] &").is.descendant]: "text-blue-500" });

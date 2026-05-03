@@ -4,6 +4,7 @@ packages:
   - tools/*
 
 catalog:
+  "@bramus/specificity": ^2.4.2
   "@pandacss/dev": ^1.10.0
   "@types/node": ^24
   "@types/react": ^19.2.14

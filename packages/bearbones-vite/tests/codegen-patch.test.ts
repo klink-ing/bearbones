@@ -17,7 +17,12 @@ const FIXTURE_PATH = join(__dirname, "fixtures", "panda-css.d.ts.txt");
 const FIXTURE_SOURCE = readFileSync(FIXTURE_PATH, "utf8");
 
 const SAMPLE_UTILITIES = ["p-4", "bg-blue-500", "flex"] as const;
-const SAMPLE_CONDITIONS = ["hover", "focus", "focusVisible", "dark"] as const;
+const SAMPLE_CONDITIONS = [
+  { name: "hover", value: "&:is(:hover, [data-hover])" },
+  { name: "focus", value: "&:is(:focus, [data-focus])" },
+  { name: "focusVisible", value: "&:is(:focus-visible, [data-focus-visible])" },
+  { name: "dark", value: ".dark &" },
+] as const;
 
 describe("patchCssArtifact", () => {
   it("injects BearbonesUtilityName, BearbonesNested, BearbonesSystemStyleObject", () => {
@@ -34,20 +39,38 @@ describe("patchCssArtifact", () => {
     expect(patched).toContain("export declare function marker<Id extends string>(id: Id)");
   });
 
-  it("enumerates `_<name>` shortcut on BearbonesMarker for every passed condition", () => {
+  it("enumerates `_<name>` shortcut with the resolved condition VALUE as Cond parameter", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
-    for (const name of SAMPLE_CONDITIONS) {
-      expect(patched).toContain(`readonly _${name}: BearbonesMarkerBuilder<Id, "${name}">`);
+    for (const { name, value } of SAMPLE_CONDITIONS) {
+      expect(patched).toContain(
+        `readonly _${name}: BearbonesMarkerBuilder<Id, ${JSON.stringify(value)}>`,
+      );
     }
   });
 
-  it("emits concrete-literal relation types parameterized on Id and Cond", () => {
+  it("emits real-shape relation types using BearbonesObserver<Id, Cond>", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
-    // Concrete-literal patterns (no bare `${string}`) so computed keys stay
-    // as named properties and don't collapse to a string-index signature.
-    expect(patched).toContain("readonly ancestor: `_bbm_${Id}_${Cond}_a &`");
-    expect(patched).toContain("readonly descendant: `&_bbm_${Id}_${Cond}_d`");
-    expect(patched).toContain("readonly sibling: `&_bbm_${Id}_${Cond}_s`");
+    // The five relations match StyleX's `when.*` shapes, with the marker-side
+    // observation wrapped in `:where(...)` for zero specificity. Computed
+    // keys stay concrete (no bare `${string}` widening) because the hash
+    // slot uses a literal placeholder, so they don't collapse into a
+    // string-index signature on the enclosing object.
+    expect(patched).toContain("type BearbonesSubstituteAmp<");
+    expect(patched).toContain("type BearbonesMarkerAnchor<Id extends string>");
+    expect(patched).toContain("type BearbonesObserver<Id extends string, Cond extends string>");
+    expect(patched).toContain("readonly ancestor: `:where(${BearbonesObserver<Id, Cond>}) &`");
+    expect(patched).toContain(
+      "readonly descendant: `&:where(:has(${BearbonesObserver<Id, Cond>}))`",
+    );
+    expect(patched).toContain(
+      "readonly siblingBefore: `:where(${BearbonesObserver<Id, Cond>}) ~ &`",
+    );
+    expect(patched).toContain(
+      "readonly siblingAfter: `&:where(:has(~ ${BearbonesObserver<Id, Cond>}))`",
+    );
+    expect(patched).toContain(
+      "readonly siblingAny: `&:where(:has(~ ${BearbonesObserver<Id, Cond>})), :where(${BearbonesObserver<Id, Cond>}) ~ &`",
+    );
   });
 
   it("emits a generic call form so literal condValue args produce concrete chain types", () => {

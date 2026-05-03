@@ -25,9 +25,53 @@ export interface MarkerDescriptor {
   readonly anchorClass: string;
 }
 
-export type MarkerRelation = "ancestor" | "descendant" | "sibling";
+export const MARKER_RELATIONS = [
+  "ancestor",
+  "descendant",
+  "siblingBefore",
+  "siblingAfter",
+  "siblingAny",
+] as const;
 
-export const MARKER_RELATIONS: readonly MarkerRelation[] = ["ancestor", "descendant", "sibling"];
+export type MarkerRelation = (typeof MARKER_RELATIONS)[number];
+
+/**
+ * The five raw-selector shapes a marker chain compiles to. The argument is
+ * the marker observer — the user's condition value with every `&` already
+ * substituted for the marker's anchor class. Each template wraps that
+ * observer in `:where(...)` so it contributes zero specificity, mirroring
+ * StyleX's `when.*` API. The trailing `&` (or `&:where(...)` self-nesting
+ * form) is Panda's placeholder for the styled element — the only specificity
+ * contributor in the final rule after Panda's `postcss-nested` flat-emit
+ * substitutes `&` for the styled class.
+ *
+ * Edit this table when adding a relation or tuning a shape; nothing else in
+ * the package hardcodes these strings. The transform's inline runtime helper
+ * derives its bodies from this same table via `composeRelationSelectors`.
+ */
+export const RELATION_SELECTORS = {
+  ancestor: <T extends string>(m: T) => `:where(${m}) &` as const,
+  descendant: <T extends string>(m: T) => `&:where(:has(${m}))` as const,
+  siblingBefore: <T extends string>(m: T) => `:where(${m}) ~ &` as const,
+  siblingAfter: <T extends string>(m: T) => `&:where(:has(~ ${m}))` as const,
+  // Comma order is irrelevant to CSS but matters to TypeScript: the
+  // template-literal type must satisfy Panda's `AnySelector`
+  // (`${string}&` | `&${string}`), so put the `&`-prefixed branch first
+  // so the result starts with `&`.
+  siblingAny: <T extends string>(m: T) => `&:where(:has(~ ${m})), :where(${m}) ~ &` as const,
+} as const satisfies Record<MarkerRelation, (m: string) => string>;
+
+/**
+ * Compose all five raw-selector strings for a single substituted observer
+ * `m`. Used both at build time (via `buildRelationSelector`) and at runtime
+ * (via the inlined helper the transform prepends to marker-declaring files).
+ * Single source of truth for the `is.<relation>` shape.
+ */
+export function composeRelationSelectors(m: string): Record<MarkerRelation, string> {
+  const out = {} as Record<MarkerRelation, string>;
+  for (const r of MARKER_RELATIONS) out[r] = RELATION_SELECTORS[r](m);
+  return out;
+}
 
 /**
  * Build-time SHA1-based hash for marker suffixes. Browser-safe is not a
@@ -63,14 +107,12 @@ export function describeMarker(id: string, modulePath: string): MarkerDescriptor
  * `condValue` is a Panda condition value verbatim — the same string the user
  * would put on the right side of a `conditions: { _foo: '<here>' }` entry.
  * Every `&` in the input is substituted with the marker's anchor selector
- * (`.bearbones-marker-<suffix>`); the result is then wrapped in the relation:
- *
- *   ancestor   — `M &`
- *   descendant — `&:has(M)`
- *   sibling    — `& ~ M, M ~ &`
- *
- * The trailing `&` in the wrapped form refers to the *styled* element (Panda's
- * normal placeholder); the inner `&` was the marker (now substituted out).
+ * (`.bearbones-marker-<suffix>`); the result is then run through the
+ * `RELATION_SELECTORS` template for the chosen relation, which wraps the
+ * marker observation in `:where(...)` for zero specificity (mirroring
+ * StyleX's `when.*` API). The trailing `&` (or `&:where(...)` self-nesting
+ * form) refers to the *styled* element — Panda's normal placeholder, the
+ * only specificity contributor in the emitted rule.
  *
  * Throws if `condValue` doesn't contain `&` — a relational marker query is
  * fundamentally about element relationships, and the placeholder is how we
@@ -87,12 +129,5 @@ export function buildRelationSelector(
     );
   }
   const m = condValue.replaceAll("&", `.${anchorClass}`);
-  switch (relation) {
-    case "ancestor":
-      return `${m} &`;
-    case "descendant":
-      return `&:has(${m})`;
-    case "sibling":
-      return `& ~ ${m}, ${m} ~ &`;
-  }
+  return RELATION_SELECTORS[relation](m);
 }

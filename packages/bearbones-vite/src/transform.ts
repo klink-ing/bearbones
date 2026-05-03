@@ -6,6 +6,7 @@ import { resolveUtility, type StyleFragment } from "./utility-map.ts";
 import { getCondition, listConditionsWithAnchor } from "./conditions-stash.ts";
 import {
   MARKER_RELATIONS,
+  RELATION_SELECTORS,
   buildRelationSelector,
   describeMarker,
   type MarkerDescriptor,
@@ -462,20 +463,43 @@ function processMarkerDeclarations(
 }
 
 /**
- * Inline runtime helper. Composes the three raw-selector strings for a
+ * Inline runtime helper. Composes the five raw-selector strings for a
  * `(condValue, anchorClass)` pair so variable-bound chains (e.g.
  * `const k = m('&:hover').is.ancestor`) work at runtime. Substitutes every
- * `&` in the input with the marker's anchor selector, then wraps in the
- * relation. Byte-for-byte identical to `buildRelationSelector` in
- * `marker-registry.ts`.
+ * `&` in the input with the marker's anchor selector, then runs the
+ * `RELATION_SELECTORS` templates against the result.
+ *
+ * The body is *derived* from `RELATION_SELECTORS` at build time (see
+ * `buildRelationsHelperBody`), so the runtime path stays byte-identical to
+ * `buildRelationSelector` in `marker-registry.ts` — no second copy of the
+ * selector shapes maintained by hand.
  *
  * Emitted once per file that declares any marker. The synthesized marker
  * record closes over this constant via a normal lexical reference.
  */
 const RELATIONS_HELPER_NAME = "__bearbones_relations";
+
+/**
+ * Sentinel substituted into each relation template at build time, then split
+ * out of the resulting string to recover the literal-text fragments around
+ * the observer slot. The fragments are re-emitted as JS string-concatenation
+ * with the runtime `m` variable in between.
+ */
+const HELPER_SENTINEL = " __BBM_OBSERVER__ ";
+
+function buildRelationsHelperBody(): string {
+  const entries = MARKER_RELATIONS.map((relation) => {
+    const filled = RELATION_SELECTORS[relation](HELPER_SENTINEL);
+    const fragments = filled.split(HELPER_SENTINEL);
+    const expr = fragments.map((f) => JSON.stringify(f)).join(" + m + ");
+    return `${relation}: ${expr}`;
+  });
+  return `{ is: { ${entries.join(", ")} } }`;
+}
+
 const RELATIONS_HELPER_SOURCE = `const ${RELATIONS_HELPER_NAME} = (c, a) => {
   const m = c.split("&").join("." + a);
-  return { is: { ancestor: m + " &", descendant: "&:has(" + m + ")", sibling: "& ~ " + m + ", " + m + " ~ &" } };
+  return ${buildRelationsHelperBody()};
 };`;
 
 function renderMarkerRecord(marker: MarkerDescriptor): string {
@@ -486,12 +510,11 @@ function renderMarkerRecord(marker: MarkerDescriptor): string {
   // by the time `parser:before` runs (where this transform fires), the stash
   // reflects the user's full vocabulary including any extensions.
   for (const { name, value } of listConditionsWithAnchor()) {
-    const ancestor = buildRelationSelector(marker.anchorClass, value, "ancestor");
-    const descendant = buildRelationSelector(marker.anchorClass, value, "descendant");
-    const sibling = buildRelationSelector(marker.anchorClass, value, "sibling");
-    fields.push(
-      `_${name}: { is: { ancestor: ${JSON.stringify(ancestor)}, descendant: ${JSON.stringify(descendant)}, sibling: ${JSON.stringify(sibling)} } }`,
-    );
+    const isEntries = MARKER_RELATIONS.map((relation) => {
+      const sel = buildRelationSelector(marker.anchorClass, value, relation);
+      return `${relation}: ${JSON.stringify(sel)}`;
+    });
+    fields.push(`_${name}: { is: { ${isEntries.join(", ")} } }`);
   }
   return `Object.assign((c) => ${RELATIONS_HELPER_NAME}(c, ${JSON.stringify(marker.anchorClass)}), { ${fields.join(", ")} })`;
 }

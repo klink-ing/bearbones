@@ -1,5 +1,6 @@
+import Specificity from "@bramus/specificity";
 import { describe, it, expect } from "vitest";
-import { buildRelationSelector, describeMarker } from "../src/marker-registry.ts";
+import { MARKER_RELATIONS, buildRelationSelector, describeMarker } from "../src/marker-registry.ts";
 
 describe("describeMarker", () => {
   it("derives a stable suffix and anchor class from `(id, modulePath)`", () => {
@@ -24,36 +25,101 @@ describe("describeMarker", () => {
 
 describe("buildRelationSelector", () => {
   const anchor = "bearbones-marker-card_a27adb16";
+  const M = `.${anchor}:hover`;
 
-  it("ancestor → `M &` after & substitution", () => {
-    expect(buildRelationSelector(anchor, "&:hover", "ancestor")).toBe(`.${anchor}:hover &`);
+  it("ancestor → `:where(M) &` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "&:hover", "ancestor")).toBe(`:where(${M}) &`);
   });
 
-  it("descendant → `&:has(M)` after & substitution", () => {
+  it("descendant → `&:where(:has(M))` after & substitution", () => {
     expect(buildRelationSelector(anchor, "[data-state=open] &", "descendant")).toBe(
-      `&:has([data-state=open] .${anchor})`,
+      `&:where(:has([data-state=open] .${anchor}))`,
     );
   });
 
-  it("sibling → `& ~ M, M ~ &` after & substitution", () => {
-    expect(buildRelationSelector(anchor, "&:focus-within", "sibling")).toBe(
-      `& ~ .${anchor}:focus-within, .${anchor}:focus-within ~ &`,
+  it("siblingBefore → `:where(M) ~ &` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "&:focus-within", "siblingBefore")).toBe(
+      `:where(.${anchor}:focus-within) ~ &`,
+    );
+  });
+
+  it("siblingAfter → `&:where(:has(~ M))` after & substitution", () => {
+    expect(buildRelationSelector(anchor, "&:focus-within", "siblingAfter")).toBe(
+      `&:where(:has(~ .${anchor}:focus-within))`,
+    );
+  });
+
+  it("siblingAny → `&:where(:has(~ M)), :where(M) ~ &` (`&`-prefixed branch first for AnySelector)", () => {
+    expect(buildRelationSelector(anchor, "&:focus-within", "siblingAny")).toBe(
+      `&:where(:has(~ .${anchor}:focus-within)), :where(.${anchor}:focus-within) ~ &`,
     );
   });
 
   it("substitutes every & in the input (global replace)", () => {
     expect(buildRelationSelector(anchor, ".foo:has(&) ~ &", "ancestor")).toBe(
-      `.foo:has(.${anchor}) ~ .${anchor} &`,
+      `:where(.foo:has(.${anchor}) ~ .${anchor}) &`,
     );
   });
 
-  it("ends in `&` for ancestor, starts with `&` for descendant + sibling — matches Panda's AnySelector", () => {
-    expect(buildRelationSelector(anchor, "&:hover", "ancestor").endsWith(" &")).toBe(true);
-    expect(buildRelationSelector(anchor, "&:hover", "descendant").startsWith("&")).toBe(true);
-    expect(buildRelationSelector(anchor, "&:hover", "sibling").startsWith("&")).toBe(true);
+  it("Panda nesting compatibility — every relation parses as a nesting selector", () => {
+    // Mirrors `@pandacss/core` `parseCondition`: startsWith("&") = self-nesting,
+    // endsWith(" &") = parent-nesting, includes("&") = combinator-nesting.
+    const cases: Record<string, "self" | "parent" | "combinator"> = {
+      ancestor: "parent",
+      descendant: "self",
+      siblingBefore: "parent",
+      siblingAfter: "self",
+      // siblingAny is comma-joined; the `&`-prefixed branch first satisfies
+      // `startsWith("&")` so Panda routes the whole rule through self-nesting.
+      // Both halves substitute `&` correctly via postcss-nested.
+      siblingAny: "self",
+    };
+    for (const [relation, expected] of Object.entries(cases)) {
+      const sel = buildRelationSelector(
+        anchor,
+        "&:hover",
+        relation as (typeof MARKER_RELATIONS)[number],
+      );
+      const actual = sel.startsWith("&")
+        ? "self"
+        : sel.endsWith(" &")
+          ? "parent"
+          : sel.includes("&")
+            ? "combinator"
+            : "none";
+      expect(actual, `${relation}: ${sel}`).toBe(expected);
+    }
   });
 
   it("throws when the condition value lacks the & placeholder", () => {
     expect(() => buildRelationSelector(anchor, ":hover", "ancestor")).toThrow(/'&' placeholder/);
+  });
+
+  // Specificity contract: every marker rule emits at (0,1,0) — same as a
+  // plain utility class. The `:where(...)` wrap collapses the marker side to
+  // zero specificity; only the styled element's own class (substituted in
+  // for the trailing `&` by Panda's `postcss-nested` at emit time) counts.
+  // This mirrors StyleX's `when.*` API contract.
+  describe("specificity contract — every relation reports (0,1,0)", () => {
+    for (const relation of MARKER_RELATIONS) {
+      it(`${relation} → (0,1,0) per comma-branch`, () => {
+        const sel = buildRelationSelector(anchor, "&:hover", relation);
+        // Substitute Panda's `&` placeholder for a sentinel class to produce
+        // a real CSS selector (mimics what `postcss-nested` does at emit
+        // time). Use a global replace so multi-`&` shapes (siblingAny) are
+        // fully resolved.
+        const real = sel.replaceAll("&", ".target");
+        const branches = Specificity.calculate(real);
+        expect(
+          branches.length,
+          `${relation}: parsed ${branches.length} branches from ${real}`,
+        ).toBeGreaterThanOrEqual(1);
+        for (const branch of branches) {
+          expect(branch.toArray(), `${relation} branch ${branch.selectorString()}`).toEqual([
+            0, 1, 0,
+          ]);
+        }
+      });
+    }
   });
 });

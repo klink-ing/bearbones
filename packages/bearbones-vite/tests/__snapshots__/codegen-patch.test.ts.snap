@@ -29,20 +29,36 @@ export type BearbonesSystemStyleObject =
 
 type Styles = BearbonesSystemStyleObject | undefined | null | false
 
+/** Recursive \`&\`-substitution. Replaces every \`&\` in S with Anchor. */
+type BearbonesSubstituteAmp<S extends string, Anchor extends string> =
+  S extends \`\${infer Pre}&\${infer Post}\`
+    ? \`\${Pre}\${Anchor}\${BearbonesSubstituteAmp<Post, Anchor>}\`
+    : S;
+
+/** Type-level marker anchor selector. \`<HASH>\` is a literal placeholder — */
+/** the runtime substitutes a real 8-hex SHA1 hash. */
+type BearbonesMarkerAnchor<Id extends string> = \`.bearbones-marker-\${Id}_<HASH>\`;
+
+/** Marker observation: condition value with \`&\` substituted for the anchor. */
+type BearbonesObserver<Id extends string, Cond extends string> =
+  BearbonesSubstituteAmp<Cond, BearbonesMarkerAnchor<Id>>;
+
 export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> {
   readonly is: {
-    readonly ancestor: \`_bbm_\${Id}_\${Cond}_a &\`;
-    readonly descendant: \`&_bbm_\${Id}_\${Cond}_d\`;
-    readonly sibling: \`&_bbm_\${Id}_\${Cond}_s\`;
+    readonly ancestor: \`:where(\${BearbonesObserver<Id, Cond>}) &\`;
+    readonly descendant: \`&:where(:has(\${BearbonesObserver<Id, Cond>}))\`;
+    readonly siblingBefore: \`:where(\${BearbonesObserver<Id, Cond>}) ~ &\`;
+    readonly siblingAfter: \`&:where(:has(~ \${BearbonesObserver<Id, Cond>}))\`;
+    readonly siblingAny: \`&:where(:has(~ \${BearbonesObserver<Id, Cond>})), :where(\${BearbonesObserver<Id, Cond>}) ~ &\`;
   };
 }
 
 export interface BearbonesMarker<Id extends string = string> {
   readonly anchor: \`bearbones-marker-\${Id}_\${string}\`;
-  readonly _hover: BearbonesMarkerBuilder<Id, "hover">;
-  readonly _focus: BearbonesMarkerBuilder<Id, "focus">;
-  readonly _focusVisible: BearbonesMarkerBuilder<Id, "focusVisible">;
-  readonly _dark: BearbonesMarkerBuilder<Id, "dark">;
+  readonly _hover: BearbonesMarkerBuilder<Id, "&:is(:hover, [data-hover])">;
+  readonly _focus: BearbonesMarkerBuilder<Id, "&:is(:focus, [data-focus])">;
+  readonly _focusVisible: BearbonesMarkerBuilder<Id, "&:is(:focus-visible, [data-focus-visible])">;
+  readonly _dark: BearbonesMarkerBuilder<Id, ".dark &">;
   <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;
 }
 
