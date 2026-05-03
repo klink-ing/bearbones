@@ -12,7 +12,6 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
     "check": "vp check"
@@ -23,11 +22,13 @@
     "magic-string": "^0.30.0"
   },
   "devDependencies": {
+    "@bearbones/utils": "workspace:*",
     "@bramus/specificity": "catalog:",
     "@pandacss/dev": "1.10.0",
     "@pandacss/preset-base": "1.10.0",
     "@pandacss/types": "1.10.0",
     "@types/node": "catalog:",
+    "@typescript/native-preview": "7.0.0-dev.20260328.1",
     "typescript": "^6.0.2",
     "vite-plus": "^0.1.20",
     "vitest": "catalog:"

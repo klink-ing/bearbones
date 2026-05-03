@@ -249,16 +249,20 @@ export {
   composeRelationSelectors,
   describeMarker,
   markerAnchor,
-  substituteAmp,
   MARKER_RELATIONS,
   RELATION_SELECTORS,
 } from "./marker-registry.ts";
-export type {
-  MarkerDescriptor,
-  MarkerRelation,
-  RelationSelectors,
-  SubstituteAmp,
-} from "./marker-registry.ts";
+export type { MarkerDescriptor, MarkerRelation, RelationSelectors } from "./marker-registry.ts";
+
+// Re-export the generic TS utilities from the private `@bearbones/utils`
+// workspace package so the codegen-patch's emitted host import
+// (`from '@bearbones/vite'`) keeps working without the host needing to
+// install `@bearbones/utils` (which never publishes). The runtime + types
+// are inlined into this dist via `deps.alwaysBundle` in `vite.config.ts`,
+// and `@bearbones/utils#build` runs before this package's build (see
+// `run.tasks.build.dependsOn`).
+export { substituteAmp } from "@bearbones/utils";
+export type { SubstituteAmp } from "@bearbones/utils";
 
 // NOTE: `BearbonesUtilityName` is no longer re-exported as a static type.
 // The set of valid utility names is now derived from the host project's

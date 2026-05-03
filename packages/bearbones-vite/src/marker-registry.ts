@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { substituteAmp, type EntryNames, type InterpolateParts } from "@bearbones/utils";
 
 /**
  * Pure helpers used by the lowering transform to compose marker anchors and
@@ -6,6 +7,10 @@ import { createHash } from "node:crypto";
  * declarations don't need to be "registered" anywhere; the transform derives
  * everything it needs (suffix, anchor class, raw selector) deterministically
  * from `(id, modulePath)` on demand.
+ *
+ * Generic TS utilities (`InterpolateParts`, `EntryNames`, `substituteAmp`,
+ * `SubstituteAmp`) live in `@bearbones/utils` so other bearbones packages
+ * can share them; this module only knows about marker-specific composition.
  *
  * The condition vocabulary that drives the `_<name>` property-form shortcuts
  * lives in `conditions-stash.ts`, not here. This module only knows how to
@@ -24,23 +29,6 @@ export interface MarkerDescriptor {
   /** The class the parent applies to itself for relational anchoring. */
   readonly anchorClass: string;
 }
-
-type InterpolateParts<Parts extends readonly string[], T extends string> = Parts extends readonly [
-  infer Only extends string,
-]
-  ? Only
-  : Parts extends readonly [infer Head extends string, ...infer Tail extends readonly string[]]
-    ? `${Head}${T}${InterpolateParts<Tail, T>}`
-    : "";
-
-/**
- * Maps each entry tuple in a tuple of `[name, ...]` entries to its name. The
- * generic parameter triggers TypeScript's homomorphic-tuple mapping so the
- * result is a precise tuple of names rather than a generic array.
- */
-type EntryNames<Entries extends readonly (readonly [string, ...unknown[]])[]> = {
-  [I in keyof Entries]: Entries[I] extends readonly [infer Name, ...unknown[]] ? Name : never;
-};
 
 /**
  * The raw-selector shapes a marker chain compiles to, expressed as `(name,
@@ -104,30 +92,6 @@ export function composeRelationSelectors<T extends string>(m: T): RelationSelect
     out[r] = applyRelationSelector(r, m);
   }
   return out as RelationSelectors<T>;
-}
-
-/**
- * Recursive `&`-substitution at the type level: replace every `&` in `S`
- * with `Anchor`. Mirrors what `substituteAmp` does at runtime — together
- * they let us derive the type-level marker observer from the same shape
- * that the runtime emits.
- */
-export type SubstituteAmp<
-  S extends string,
-  Anchor extends string,
-> = S extends `${infer Pre}&${infer Post}` ? `${Pre}${Anchor}${SubstituteAmp<Post, Anchor>}` : S;
-
-/**
- * Substitute every `&` in `s` with `anchor`. Strongly typed over both
- * arguments so callers (and the codegen-patch type emit) can derive the
- * substituted literal from the function's return type via
- * `ReturnType<typeof substituteAmp<S, Anchor>>`.
- */
-export function substituteAmp<S extends string, Anchor extends string>(
-  s: S,
-  anchor: Anchor,
-): SubstituteAmp<S, Anchor> {
-  return s.split("&").join(anchor) as SubstituteAmp<S, Anchor>;
 }
 
 /**
