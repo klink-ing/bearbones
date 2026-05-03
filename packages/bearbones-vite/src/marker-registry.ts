@@ -85,7 +85,7 @@ export type RelationSelectors<T extends string> = {
   [R in keyof typeof RELATION_SELECTORS]: InterpolateParts<(typeof RELATION_SELECTORS)[R], T>;
 };
 
-function applyRelationSelector<R extends MarkerRelation, T extends string>(
+export function applyRelationSelector<R extends MarkerRelation, T extends string>(
   relation: R,
   m: T,
 ): RelationSelectors<T>[R] {
@@ -104,6 +104,44 @@ export function composeRelationSelectors<T extends string>(m: T): RelationSelect
     out[r] = applyRelationSelector(r, m);
   }
   return out as RelationSelectors<T>;
+}
+
+/**
+ * Recursive `&`-substitution at the type level: replace every `&` in `S`
+ * with `Anchor`. Mirrors what `substituteAmp` does at runtime — together
+ * they let us derive the type-level marker observer from the same shape
+ * that the runtime emits.
+ */
+export type SubstituteAmp<
+  S extends string,
+  Anchor extends string,
+> = S extends `${infer Pre}&${infer Post}` ? `${Pre}${Anchor}${SubstituteAmp<Post, Anchor>}` : S;
+
+/**
+ * Substitute every `&` in `s` with `anchor`. Strongly typed over both
+ * arguments so callers (and the codegen-patch type emit) can derive the
+ * substituted literal from the function's return type via
+ * `ReturnType<typeof substituteAmp<S, Anchor>>`.
+ */
+export function substituteAmp<S extends string, Anchor extends string>(
+  s: S,
+  anchor: Anchor,
+): SubstituteAmp<S, Anchor> {
+  return s.split("&").join(anchor) as SubstituteAmp<S, Anchor>;
+}
+
+/**
+ * Compose the marker anchor selector (`.bearbones-marker-<id>_<hash>`) from
+ * id and hash. The codegen-patch's type emit calls
+ * `ReturnType<typeof markerAnchor<Id, "<HASH>">>` to derive the type-level
+ * anchor — the runtime substitutes a real 8-hex SHA1 hash, the type uses a
+ * fixed `<HASH>` placeholder TypeScript can hold as a literal.
+ */
+export function markerAnchor<Id extends string, Hash extends string>(
+  id: Id,
+  hash: Hash,
+): `.bearbones-marker-${Id}_${Hash}` {
+  return `.bearbones-marker-${id}_${hash}`;
 }
 
 /**
@@ -161,6 +199,12 @@ export function buildRelationSelector(
       `bearbones: marker() requires the '&' placeholder; got: ${JSON.stringify(condValue)}`,
     );
   }
-  const m = condValue.replaceAll("&", `.${anchorClass}`);
+  // Pipeline mirrors the type-level derivation in the codegen-patch:
+  //   substituteAmp(condValue, "." + anchorClass) → m
+  //   applyRelationSelector(relation, m) → final selector
+  // The codegen-patch uses `ReturnType<typeof substituteAmp<...>>` and
+  // `ReturnType<typeof composeRelationSelectors<...>>` to derive the
+  // type-level shape from these same functions.
+  const m = substituteAmp(condValue, `.${anchorClass}` as `.${typeof anchorClass}`);
   return applyRelationSelector(relation, m);
 }

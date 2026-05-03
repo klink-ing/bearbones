@@ -48,28 +48,19 @@ describe("patchCssArtifact", () => {
     }
   });
 
-  it("emits real-shape relation types using BearbonesObserver<Id, Cond>", () => {
+  it("derives relation types from runtime function return types via ReturnType<typeof ...>", () => {
     const patched = patchCssArtifact(FIXTURE_SOURCE, SAMPLE_UTILITIES, SAMPLE_CONDITIONS);
-    // The five relations match StyleX's `when.*` shapes, with the marker-side
-    // observation wrapped in `:where(...)` for zero specificity. Computed
-    // keys stay concrete (no bare `${string}` widening) because the hash
-    // slot uses a literal placeholder, so they don't collapse into a
-    // string-index signature on the enclosing object.
-    expect(patched).toContain("type BearbonesSubstituteAmp<");
-    expect(patched).toContain("type BearbonesMarkerAnchor<Id extends string>");
-    expect(patched).toContain("type BearbonesObserver<Id extends string, Cond extends string>");
-    expect(patched).toContain("readonly ancestor: `:where(${BearbonesObserver<Id, Cond>}) &`");
+    // The marker observer + relation shape are derived from the return
+    // types of `markerAnchor`, `substituteAmp`, and `composeRelationSelectors`
+    // in `@bearbones/vite/marker-registry` — single source of truth, no
+    // hand-maintained duplicate of the selector shapes in the type emit.
     expect(patched).toContain(
-      "readonly descendant: `&:where(:has(${BearbonesObserver<Id, Cond>}))`",
+      "import type { composeRelationSelectors, markerAnchor, substituteAmp } from '@bearbones/vite';",
     );
+    expect(patched).toContain('typeof markerAnchor<Id, "<HASH>">');
+    expect(patched).toContain("typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>");
     expect(patched).toContain(
-      "readonly siblingBefore: `:where(${BearbonesObserver<Id, Cond>}) ~ &`",
-    );
-    expect(patched).toContain(
-      "readonly siblingAfter: `&:where(:has(~ ${BearbonesObserver<Id, Cond>}))`",
-    );
-    expect(patched).toContain(
-      "readonly siblingAny: `&:where(:has(~ ${BearbonesObserver<Id, Cond>})), :where(${BearbonesObserver<Id, Cond>}) ~ &`",
+      "readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;",
     );
   });
 
