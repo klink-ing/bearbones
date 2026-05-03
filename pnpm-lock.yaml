@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@babel/parser':
+      specifier: ^7.25.0
+      version: 7.29.3
     '@bramus/specificity':
       specifier: ^2.4.2
       version: 2.4.2
@@ -30,6 +33,12 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
+    fast-glob:
+      specifier: ^3.3.0
+      version: 3.3.3
+    magic-string:
+      specifier: ^0.30.0
+      version: 0.30.21
     react:
       specifier: ^19.2.5
       version: 19.2.5
@@ -110,13 +119,13 @@ importers:
   packages/bearbones-vite:
     dependencies:
       '@babel/parser':
-        specifier: ^7.25.0
+        specifier: 'catalog:'
         version: 7.29.3
       fast-glob:
-        specifier: ^3.3.0
+        specifier: 'catalog:'
         version: 3.3.3
       magic-string:
-        specifier: ^0.30.0
+        specifier: 'catalog:'
         version: 0.30.21
     devDependencies:
       '@bearbones/utils':
