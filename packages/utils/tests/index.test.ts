@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  deepAssign,
+  shortHash,
   substituteAmp,
   type EntryNames,
   type InterpolateParts,
@@ -65,5 +67,45 @@ describe("type-level utilities", () => {
     type Result = SubstituteAmp<"&:has(.foo)", ".m">;
     const expected: Result = ".m:has(.foo)";
     expect(expected).toBe(substituteAmp("&:has(.foo)", ".m"));
+  });
+});
+
+describe("deepAssign", () => {
+  it("merges flat keys, last write wins", () => {
+    const target: Record<string, unknown> = { a: 1, b: 2 };
+    deepAssign(target, { b: 3, c: 4 });
+    expect(target).toEqual({ a: 1, b: 3, c: 4 });
+  });
+
+  it("recurses into nested plain objects", () => {
+    const target: Record<string, unknown> = { _hover: { color: "red" } };
+    deepAssign(target, { _hover: { padding: "8" } });
+    expect(target).toEqual({ _hover: { color: "red", padding: "8" } });
+  });
+
+  it("treats arrays as leaves (replaces wholesale)", () => {
+    const target: Record<string, unknown> = { xs: [1, 2] };
+    deepAssign(target, { xs: [3] });
+    expect(target).toEqual({ xs: [3] });
+  });
+
+  it("overwrites object with non-object on conflict", () => {
+    const target: Record<string, unknown> = { v: { a: 1 } };
+    deepAssign(target, { v: "scalar" });
+    expect(target).toEqual({ v: "scalar" });
+  });
+});
+
+describe("shortHash", () => {
+  it("produces 8 hex characters", () => {
+    expect(shortHash("hello")).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("is deterministic", () => {
+    expect(shortHash("foo::bar")).toBe(shortHash("foo::bar"));
+  });
+
+  it("differs for different inputs", () => {
+    expect(shortHash("a")).not.toBe(shortHash("b"));
   });
 });

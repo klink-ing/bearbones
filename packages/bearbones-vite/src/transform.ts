@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
+import { deepAssign } from "@bearbones/utils";
 import { resolveUtility, type StyleFragment } from "./utility-map.ts";
 import { getCondition, listConditionsWithAnchor } from "./conditions-stash.ts";
 import {
@@ -273,29 +274,6 @@ function lowerValue(node: any, markers: MarkerCallContext): unknown {
     return lowerObject(node, markers);
   }
   return undefined;
-}
-
-/**
- * Deep-merge two style fragments. Later writes win at property leaves but
- * nested condition objects are merged recursively so ordering of fragments
- * matches Panda's own multi-arg `css()` semantics.
- */
-function deepAssign(target: StyleFragment, source: StyleFragment): void {
-  for (const [k, v] of Object.entries(source)) {
-    const existing = target[k];
-    if (
-      existing != null &&
-      typeof existing === "object" &&
-      !Array.isArray(existing) &&
-      v != null &&
-      typeof v === "object" &&
-      !Array.isArray(v)
-    ) {
-      deepAssign(existing as StyleFragment, v as StyleFragment);
-    } else {
-      target[k] = v;
-    }
-  }
 }
 
 /**

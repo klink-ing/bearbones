@@ -7,7 +7,13 @@
  * function's `ReturnType<typeof fn<...>>`. That round-trip is what lets
  * `@bearbones/vite`'s codegen-patch emit a host-readable `css.d.ts`
  * whose marker types evaluate to the exact runtime selector strings.
+ *
+ * A few helpers (`deepAssign`, `shortHash`) are general-purpose runtime
+ * utilities — kept here so other bearbones packages can reach for them
+ * without rebuilding the same shapes.
  */
+
+import { createHash } from "node:crypto";
 
 /**
  * Recursive template-literal interpolation. Joins each segment in `Parts`
@@ -63,4 +69,44 @@ export function substituteAmp<S extends string, Anchor extends string>(
   anchor: Anchor,
 ): SubstituteAmp<S, Anchor> {
   return s.split("&").join(anchor) as SubstituteAmp<S, Anchor>;
+}
+
+/**
+ * Recursive deep-merge of two plain-object trees. Later writes win at
+ * leaves; nested objects are merged recursively. Arrays are treated as
+ * leaves (replaced wholesale, not concatenated). Mutates `target` in
+ * place — caller controls whether to copy first.
+ *
+ * Generic over `Record<string, unknown>` so it composes with any plain-
+ * object shape (style fragments, token trees, config blobs).
+ */
+export function deepAssign(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const [k, v] of Object.entries(source)) {
+    const existing = target[k];
+    if (
+      existing != null &&
+      typeof existing === "object" &&
+      !Array.isArray(existing) &&
+      v != null &&
+      typeof v === "object" &&
+      !Array.isArray(v)
+    ) {
+      deepAssign(existing as Record<string, unknown>, v as Record<string, unknown>);
+    } else {
+      target[k] = v;
+    }
+  }
+}
+
+/**
+ * Build-time short hash (8-hex SHA1) over a string. Browser-safe is not a
+ * goal — the call site is in Node-side tooling. Used by bearbones to
+ * derive stable suffixes for marker anchor classes from `(id, modulePath)`.
+ *
+ * SHA1 is fine here: collision-resistance isn't a security requirement,
+ * just a "different inputs produce different outputs with very high
+ * probability" guarantee for build-time identifiers.
+ */
+export function shortHash(input: string): string {
+  return createHash("sha1").update(input).digest("hex").slice(0, 8);
 }

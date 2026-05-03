@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { substituteAmp, type EntryNames, type InterpolateParts } from "@bearbones/utils";
+import { shortHash, substituteAmp, type EntryNames, type InterpolateParts } from "@bearbones/utils";
 
 /**
  * Pure helpers used by the lowering transform to compose marker anchors and
@@ -106,16 +105,6 @@ export function markerAnchor<Id extends string, Hash extends string>(
   hash: Hash,
 ): `.bearbones-marker-${Id}_${Hash}` {
   return `.bearbones-marker-${id}_${hash}`;
-}
-
-/**
- * Build-time SHA1-based hash for marker suffixes. Browser-safe is not a
- * requirement: the `(id, modulePath)` pair is only meaningful during the
- * build, and the hash output is baked into the synthesized marker record as
- * a literal.
- */
-function shortHash(input: string): string {
-  return createHash("sha1").update(input).digest("hex").slice(0, 8);
 }
 
 /**
