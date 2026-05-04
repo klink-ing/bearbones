@@ -1,0 +1,85 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildCssDtsPatches > matches snapshot for a representative condition list 1`] = `
+"/* eslint-disable */
+import type { SystemStyleObject } from "../types/index";
+
+type Styles = SystemStyleObject | undefined | null | false;
+
+// Marker selector shapes are derived from the return types of the runtime
+// functions in \`@klinking/panda-markers/marker-registry\`, so the type-level
+// evaluation of \`marker(...).is.<relation>\` matches the runtime emit
+// byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't
+// compute — we substitute a fixed \`<HASH>\` literal placeholder there).
+import type {
+  composeRelationSelectors,
+  markerAnchor,
+  markerAnchorClass,
+  substituteAmp,
+} from "@klinking/panda-markers";
+
+/** Anchor selector for the marker; \`<HASH>\` is the type-level placeholder. */
+type BearbonesMarkerAnchor<Id extends string> = ReturnType<typeof markerAnchor<Id, "<HASH>">>;
+
+/** Marker observation: condition value with every \`&\` substituted for the anchor. */
+type BearbonesObserver<Id extends string, Cond extends string> = ReturnType<
+  typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>
+>;
+
+export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> {
+  readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;
+}
+
+/**
+ * The host project's condition vocabulary as a typed map. Each entry's
+ * value is the resolved Panda condition selector — the same string the
+ * runtime conditions stash holds. Single source of truth for the
+ * \`BearbonesMarker._<name>\` shortcuts; do not duplicate these strings
+ * elsewhere in the type emit.
+ */
+type BearbonesMarkerConditions = {
+  readonly hover: "&:is(:hover, [data-hover])";
+  readonly focus: "&:is(:focus, [data-focus])";
+  readonly focusVisible: "&:is(:focus-visible, [data-focus-visible])";
+  readonly dark: ".dark &";
+};
+
+/**
+ * Mapped type that turns each condition entry into a typed \`_<name>\`
+ * shortcut on the marker. The \`Cond\` parameter is the entry's value, so
+ * \`BearbonesMarkerBuilder\` resolves to a relation selector observing the
+ * exact runtime condition.
+ */
+type BearbonesMarkerShortcuts<Id extends string> = {
+  readonly [K in keyof BearbonesMarkerConditions as \`_\${K & string}\`]: BearbonesMarkerBuilder<
+    Id,
+    BearbonesMarkerConditions[K]
+  >;
+};
+
+export interface BearbonesMarker<Id extends string = string> extends BearbonesMarkerShortcuts<Id> {
+  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;
+  <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;
+}
+
+export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;
+
+interface CssRawFunction {
+  (styles: Styles): SystemStyleObject;
+  (styles: Styles[]): SystemStyleObject;
+  (...styles: Array<Styles | Styles[]>): SystemStyleObject;
+  (styles: Styles): SystemStyleObject;
+}
+
+interface CssFunction {
+  (styles: Styles): string;
+  (styles: Styles[]): string;
+  (...styles: Array<Styles | Styles[]>): string;
+  (styles: Styles): string;
+
+  raw: CssRawFunction;
+}
+
+export declare const css: CssFunction;
+"
+`;

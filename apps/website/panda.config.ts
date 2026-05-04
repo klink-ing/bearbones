@@ -1,6 +1,6 @@
 import { defineConfig } from "@pandacss/dev";
-import { bearbonesPreset } from "@bearbones/preset";
-import { bearbonesHooks } from "@bearbones/vite";
+import { markersPreset, markersPlugin } from "@klinking/panda-markers";
+import { shorthandPlugin } from "@klinking/panda-shorthand";
 
 export default defineConfig({
   preflight: true,
@@ -14,12 +14,13 @@ export default defineConfig({
   // We don't list presets explicitly because Panda's defaults
   // (preset-base + preset-panda) provide the token grid and utility
   // shorthands. Specifying `presets` overrides the defaults even though
-  // `eject` defaults to false; safest path is to extend via theme/conditions
-  // and let the defaults flow through.
-  // bearbones-specific conditions are merged into the resolved config by
-  // bearbonesHooks() in `config:resolved`.
-  conditions: bearbonesPreset().conditions,
-  hooks: bearbonesHooks(),
+  // `eject` defaults to false; safest path is to extend via
+  // theme/conditions and let the defaults flow through.
+  conditions: markersPreset().conditions,
+  // Hook bundles for both plugins. Panda's hook-sharing API
+  // (https://panda-css.com/docs/concepts/hooks#sharing-hooks) composes
+  // these into a single hook per name.
+  plugins: [markersPlugin(), shorthandPlugin()],
   strictPropertyValues: true,
   strictTokens: true,
 });

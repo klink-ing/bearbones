@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
-    "check": "vp run --filter '@bearbones/*' build && vp run --filter website codegen && vp check && vp run -r test",
+    "check": "vp run @klinking/panda-markers#build && vp run @klinking/panda-shorthand#build && vp run website#codegen && vp check && vp run -r test",
     "fix": "vp fmt",
     "prepare": "vp config"
   },

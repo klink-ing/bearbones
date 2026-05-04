@@ -1,0 +1,29 @@
+{
+  "name": "@klinking/panda-utils",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Private workspace utilities shared by @klinking/panda-markers and @klinking/panda-shorthand: codegen-patch AST anchors, transform helpers, the inline-templates Vite plugin, and small TypeScript helpers (substituteAmp, shortHash, deepAssign).",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./build": "./dist/build.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@babel/parser": "catalog:",
+    "magic-string": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  }
+}
