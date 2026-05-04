@@ -7,7 +7,7 @@ import type { SystemStyleObject } from "../types/index";
 type Styles = SystemStyleObject | undefined | null | false;
 
 // Marker selector shapes are derived from the return types of the runtime
-// functions in \`@bearbones/vite/marker-registry\`, so the type-level
+// functions in \`@klinking/panda-markers/marker-registry\`, so the type-level
 // evaluation of \`marker(...).is.<relation>\` matches the runtime emit
 // byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't
 // compute — we substitute a fixed \`<HASH>\` literal placeholder there).

@@ -22,7 +22,7 @@
 // stripped from the emitted output by `codegen-patch-render.ts`.
 // ---bearbones-template-emit-below---
 // Marker selector shapes are derived from the return types of the runtime
-// functions in `@bearbones/vite/marker-registry`, so the type-level
+// functions in `@klinking/panda-markers/marker-registry`, so the type-level
 // evaluation of `marker(...).is.<relation>` matches the runtime emit
 // byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't
 // compute — we substitute a fixed `<HASH>` literal placeholder there).

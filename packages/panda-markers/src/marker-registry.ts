@@ -13,7 +13,7 @@ import {
  * from `(id, modulePath)` on demand.
  *
  * Generic TS utilities (`InterpolateParts`, `EntryNames`, `substituteAmp`,
- * `SubstituteAmp`) live in `@bearbones/utils` so other bearbones packages
+ * `SubstituteAmp`) live in `@klinking/panda-utils` so other packages
  * can share them; this module only knows about marker-specific composition.
  *
  * The condition vocabulary that drives the `_<name>` property-form shortcuts
