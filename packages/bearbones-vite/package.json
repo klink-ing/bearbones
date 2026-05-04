@@ -12,7 +12,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "dev": "vp pack --watch",
+    "dev": "node scripts/generate-templates.mjs && vp pack --watch",
     "test": "vp test",
     "check": "vp check"
   },
