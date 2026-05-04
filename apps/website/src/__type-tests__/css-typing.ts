@@ -1,15 +1,16 @@
 /**
- * Type-level tests for the bearbones-augmented `css()` signature.
+ * Type-level tests for the augmented `css()` signature.
  *
  * This file is type-checked by `tsc` as part of the website build but never
  * executed. Each block exercises a specific accepted or rejected shape from
- * the spec's behavioural diff. If the patch in `@bearbones/vite/codegen-patch`
- * regresses, one of the `@ts-expect-error` directives stops matching and the
- * build fails loudly.
+ * the spec's behavioural diff. If the codegen-patch in
+ * `@klinking/panda-shorthand` (or `@klinking/panda-markers`) regresses, one
+ * of the `@ts-expect-error` directives stops matching and the build fails
+ * loudly.
  *
- * Note: this file is *also* run through the bearbones lowering transform, so
- * literal utility strings here are rewritten before they reach the browser.
- * That's fine — we're testing the static type surface, not runtime behavior.
+ * Note: this file is *also* run through the lowering transform, so literal
+ * utility strings here are rewritten before they reach the browser. That's
+ * fine — we're testing the static type surface, not runtime behavior.
  */
 
 import { css } from "../../styled-system/css";

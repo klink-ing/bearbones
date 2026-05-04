@@ -33,9 +33,6 @@ catalogs:
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
-    fast-glob:
-      specifier: ^3.3.0
-      version: 3.3.3
     magic-string:
       specifier: ^0.30.0
       version: 0.30.21
@@ -66,12 +63,12 @@ importers:
 
   apps/website:
     dependencies:
-      '@bearbones/preset':
+      '@klinking/panda-markers':
         specifier: workspace:*
-        version: link:../../packages/bearbones-preset
-      '@bearbones/vite':
+        version: link:../../packages/panda-markers
+      '@klinking/panda-shorthand':
         specifier: workspace:*
-        version: link:../../packages/bearbones-vite
+        version: link:../../packages/panda-shorthand
       '@pandacss/dev':
         specifier: 'catalog:'
         version: 1.10.0(typescript@6.0.3)
@@ -101,39 +98,21 @@ importers:
         specifier: 'catalog:'
         version: 0.1.20(@types/node@25.6.0)(@voidzero-dev/vite-plus-core@0.1.20(@types/node@25.6.0)(jiti@2.6.1)(typescript@6.0.3)(yaml@2.8.3))(jiti@2.6.1)(typescript@6.0.3)(yaml@2.8.3)
 
-  packages/bearbones-preset:
-    devDependencies:
-      '@pandacss/dev':
-        specifier: 'catalog:'
-        version: 1.10.0(typescript@6.0.3)
-      '@types/node':
-        specifier: 'catalog:'
-        version: 24.12.2
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-      vite-plus:
-        specifier: 'catalog:'
-        version: 0.1.20(@types/node@24.12.2)(jiti@2.6.1)(typescript@6.0.3)(vite@8.0.10(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3))(yaml@2.8.3)
-
-  packages/bearbones-vite:
+  packages/panda-markers:
     dependencies:
       '@babel/parser':
         specifier: 'catalog:'
         version: 7.29.3
-      fast-glob:
-        specifier: 'catalog:'
-        version: 3.3.3
       magic-string:
         specifier: 'catalog:'
         version: 0.30.21
     devDependencies:
-      '@bearbones/utils':
-        specifier: workspace:*
-        version: link:../utils
       '@bramus/specificity':
         specifier: 'catalog:'
         version: 2.4.2
+      '@klinking/panda-utils':
+        specifier: workspace:*
+        version: link:../panda-utils
       '@pandacss/dev':
         specifier: 'catalog:'
         version: 1.10.0(typescript@6.0.3)
@@ -156,7 +135,45 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-test@latest
         version: '@voidzero-dev/vite-plus-test@0.1.20(@types/node@24.12.2)(jiti@2.6.1)(typescript@6.0.3)(vite@8.0.10(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3))(yaml@2.8.3)'
 
-  packages/utils:
+  packages/panda-shorthand:
+    dependencies:
+      '@babel/parser':
+        specifier: 'catalog:'
+        version: 7.29.3
+      magic-string:
+        specifier: 'catalog:'
+        version: 0.30.21
+    devDependencies:
+      '@klinking/panda-utils':
+        specifier: workspace:*
+        version: link:../panda-utils
+      '@pandacss/dev':
+        specifier: 'catalog:'
+        version: 1.10.0(typescript@6.0.3)
+      '@pandacss/types':
+        specifier: 'catalog:'
+        version: 1.10.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.2
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.1.20(@types/node@24.12.2)(jiti@2.6.1)(typescript@6.0.3)(vite@8.0.10(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3))(yaml@2.8.3)
+      vitest:
+        specifier: npm:@voidzero-dev/vite-plus-test@latest
+        version: '@voidzero-dev/vite-plus-test@0.1.20(@types/node@24.12.2)(jiti@2.6.1)(typescript@6.0.3)(vite@8.0.10(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3))(yaml@2.8.3)'
+
+  packages/panda-utils:
+    dependencies:
+      '@babel/parser':
+        specifier: 'catalog:'
+        version: 7.29.3
+      magic-string:
+        specifier: 'catalog:'
+        version: 0.30.21
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

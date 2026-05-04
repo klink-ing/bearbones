@@ -1,0 +1,38 @@
+{
+  "name": "@klinking/panda-markers",
+  "version": "0.0.0",
+  "description": "Panda CSS plugin: typed parent-state markers with relational chains (StyleX-style `.is.<relation>`) compiled to raw selectors at extraction + dev-server time.",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@babel/parser": "catalog:",
+    "magic-string": "catalog:"
+  },
+  "devDependencies": {
+    "@bramus/specificity": "catalog:",
+    "@klinking/panda-utils": "workspace:*",
+    "@pandacss/dev": "catalog:",
+    "@pandacss/preset-base": "catalog:",
+    "@pandacss/types": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@pandacss/dev": "*",
+    "@pandacss/preset-base": "*"
+  }
+}
