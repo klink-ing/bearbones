@@ -21,14 +21,20 @@ export default defineConfig({
       // parallel: `@bearbones/vite#dev` (a `vp pack --watch` with
       // `clean: false`, so it incrementally overwrites the just-built
       // bundle in place rather than wiping `dist/` first) and
-      // `website#dev` (panda watcher + Vite dev server). `trap` kills
-      // the whole process group on SIGINT/SIGTERM so Ctrl-C stops
-      // both children.
+      // `website#dev` (panda watcher + Vite dev server). The first
+      // backgrounds; the second runs in the foreground and keeps the
+      // shell alive. Ctrl-C from the terminal sends SIGINT to the whole
+      // process group, which the shell + vp propagate to both children
+      // — verified empirically, no `trap` needed. Edge case: if the
+      // foreground watcher exits unexpectedly mid-session, the
+      // backgrounded one orphans. For two long-running dev watchers
+      // neither of which is expected to exit, that doesn't justify the
+      // extra `& wait` ceremony.
       //
       // Caching: `cache: false` because the body is long-running
       // watchers — nothing meaningful to fingerprint.
       dev: {
-        command: "trap 'kill 0' INT TERM; vp run @bearbones/vite#dev & vp run website#dev & wait",
+        command: "vp run @bearbones/vite#dev & vp run website#dev",
         cache: false,
         dependsOn: ["@bearbones/vite#build", "@bearbones/preset#build"],
       },
