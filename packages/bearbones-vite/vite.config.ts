@@ -38,16 +38,19 @@ export default defineConfig({
     // Inline its source (and types) into this dist so consumers don't see a
     // stale workspace specifier in the published package's dependencies.
     deps: { alwaysBundle: ["@bearbones/utils"] },
-    // Don't wipe `dist/` between (re)builds. By default tsdown cleans the
-    // output dir before each build — including the very first build of a
-    // `vp pack --watch` session, even if `dist/` already holds a fresh
-    // bundle from a prior `vp pack`. That open window (~hundreds of ms
-    // while the first watch rebuild runs) breaks consumers like the
-    // website's Vite/Panda config loader, which can race the rebuild and
-    // fail with `Failed to resolve entry for package "@bearbones/vite"`.
-    // Skipping the clean lets the new bundle atomically overwrite the
-    // previous one — entry files are always present.
-    clean: false,
+    // Skip the pre-build wipe of `dist/` ONLY in watch mode. The default
+    // `clean: true` wipes the output dir before each build — including
+    // the very first build of a `vp pack --watch` session — leaving a
+    // window where the bundle entry temporarily doesn't exist. The root
+    // `dev` task `dependsOn`-pre-builds this package via `vp pack` and
+    // then runs `vp pack --watch` in parallel with the website; with
+    // `clean: false` the watcher's incremental builds atomically
+    // overwrite the existing bundle in place rather than racing the
+    // website's Vite/Panda config loader through a missing entry.
+    //
+    // Real one-shot builds keep `clean: true` so removed entries don't
+    // leave stale files in `dist/` between runs.
+    clean: !process.argv.includes("--watch"),
     plugins: [inlineTemplatesPlugin()],
   },
   lint: {
