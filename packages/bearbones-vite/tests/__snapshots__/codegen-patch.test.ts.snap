@@ -2,32 +2,28 @@
 
 exports[`patchCssArtifact > matches snapshot for a representative utility list 1`] = `
 "/* eslint-disable */
-import type { SystemStyleObject } from '../types/index';
-import type { Nested, Conditions } from '../types/conditions';
-import type { Selectors, AnySelector } from '../types/selectors';
-import type { SystemProperties, CssVarProperties } from '../types/style-props';
-export type BearbonesUtilityName =
-  | "p-4"
-  | "bg-blue-500"
-  | "flex"
-;
+import type { SystemStyleObject } from "../types/index";
+import type { Nested, Conditions } from "../types/conditions";
+import type { Selectors, AnySelector } from "../types/selectors";
+import type { SystemProperties, CssVarProperties } from "../types/style-props";
+
+export type BearbonesUtilityName = "p-4" | "bg-blue-500" | "flex";
 
 type BearbonesNestedObject<P> = P & {
-  [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
+  [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[];
 } & {
-  [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
+  [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[];
 } & {
-  [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[]
+  [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[];
 };
 
 export type BearbonesNested<P> = BearbonesUtilityName | BearbonesNestedObject<P>;
 
 export type BearbonesSystemStyleObject =
   | BearbonesUtilityName
-  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, 'base'>;
+  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, "base">;
 
-
-type Styles = BearbonesSystemStyleObject | undefined | null | false
+type Styles = BearbonesSystemStyleObject | undefined | null | false;
 
 // Marker selector shapes are derived from the return types of the runtime
 // functions in \`@bearbones/vite/marker-registry\`, so the type-level
@@ -39,12 +35,10 @@ import type {
   markerAnchor,
   markerAnchorClass,
   substituteAmp,
-} from '@bearbones/vite';
+} from "@bearbones/vite";
 
 /** Anchor selector for the marker; \`<HASH>\` is the type-level placeholder. */
-type BearbonesMarkerAnchor<Id extends string> = ReturnType<
-  typeof markerAnchor<Id, "<HASH>">
->;
+type BearbonesMarkerAnchor<Id extends string> = ReturnType<typeof markerAnchor<Id, "<HASH>">>;
 
 /** Marker observation: condition value with every \`&\` substituted for the anchor. */
 type BearbonesObserver<Id extends string, Cond extends string> = ReturnType<
@@ -63,10 +57,10 @@ export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> 
  * elsewhere in the type emit.
  */
 type BearbonesMarkerConditions = {
-  readonly "hover": "&:is(:hover, [data-hover])";
-  readonly "focus": "&:is(:focus, [data-focus])";
-  readonly "focusVisible": "&:is(:focus-visible, [data-focus-visible])";
-  readonly "dark": ".dark &";
+  readonly hover: "&:is(:hover, [data-hover])";
+  readonly focus: "&:is(:focus, [data-focus])";
+  readonly focusVisible: "&:is(:focus-visible, [data-focus-visible])";
+  readonly dark: ".dark &";
 };
 
 /**
@@ -82,29 +76,27 @@ type BearbonesMarkerShortcuts<Id extends string> = {
   >;
 };
 
-export interface BearbonesMarker<Id extends string = string>
-  extends BearbonesMarkerShortcuts<Id> {
+export interface BearbonesMarker<Id extends string = string> extends BearbonesMarkerShortcuts<Id> {
   readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;
   <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;
 }
 
 export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;
 
-
 interface CssRawFunction {
-  (styles: Styles): SystemStyleObject
-  (styles: Styles[]): SystemStyleObject
-  (...styles: Array<Styles | Styles[]>): SystemStyleObject
-  (styles: Styles): SystemStyleObject
+  (styles: Styles): SystemStyleObject;
+  (styles: Styles[]): SystemStyleObject;
+  (...styles: Array<Styles | Styles[]>): SystemStyleObject;
+  (styles: Styles): SystemStyleObject;
 }
 
 interface CssFunction {
-  (styles: Styles): string
-  (styles: Styles[]): string
-  (...styles: Array<Styles | Styles[]>): string
-  (styles: Styles): string
+  (styles: Styles): string;
+  (styles: Styles[]): string;
+  (...styles: Array<Styles | Styles[]>): string;
+  (styles: Styles): string;
 
-  raw: CssRawFunction
+  raw: CssRawFunction;
 }
 
 export declare const css: CssFunction;

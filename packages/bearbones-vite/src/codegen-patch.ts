@@ -19,69 +19,62 @@
  * codegen pass, after `config:resolved` (so the conditions stash is
  * populated) and immediately before Panda writes any artifact to disk.
  *
- * Strategy: locate Panda's `type Styles = ...` line by exact-match anchor and
- * rewrite it to point at a widened type tree (`BearbonesSystemStyleObject`)
- * defined inline above. The widened tree mirrors Panda's own `Nested<P>`
- * structure. If Panda's emitted format ever changes such that the anchor
- * isn't found, the patch throws a recognizable error rather than silently
- * producing wrong types.
+ * Strategy: the static body of every patched block lives in a real `.ts`
+ * template under `src/templates/` (rendered via `codegen-patch-render.ts`),
+ * and the two splice points in Panda's `css.d.ts` are located by AST shape
+ * (see `codegen-patch-ast.ts`) rather than exact string match — so benign
+ * format drift in Panda's emit (whitespace, quote style, comments) doesn't
+ * break the patch.
  */
 
+import MagicString from "magic-string";
 import { listConditionsWithAnchor } from "./conditions-stash.ts";
 import { listUtilities } from "./utility-map.ts";
-
-/**
- * The anchor we replace in Panda's emitted `css.d.ts`.
- */
-const STYLES_ANCHOR = "type Styles = SystemStyleObject | undefined | null | false";
+import { locateSpliceTargets } from "./codegen-patch-ast.ts";
+import {
+  renderInjectedBlock,
+  renderMarkerBlock,
+  renderMarkerStub,
+} from "./codegen-patch-render.ts";
 
 /**
  * Sentinel comment we drop into the runtime artifact so a re-patch (e.g. on
  * Panda's watch-mode codegen) doesn't append a second copy of the marker
- * stub.
+ * stub. Must match the leading line of the runtime template body.
  */
 const RUNTIME_PATCH_SENTINEL = "/* @bearbones/vite: marker stub */";
 
 /**
  * Patch the source of `styled-system/css/css.d.ts`. Returns the patched
- * source string. Pure function — no I/O, no side effects.
+ * source string. Pure function — no I/O, no side effects (template files
+ * are read on first access and cached).
  *
- * Throws if the source doesn't contain the expected anchor.
+ * Throws if Panda's emitted source doesn't contain the expected splice
+ * points (see `codegen-patch-ast.ts` for the matcher).
  */
 export function patchCssArtifact(
   source: string,
   utilityNames: readonly string[],
   conditions: readonly { name: string; value: string }[],
 ): string {
-  if (!source.includes(STYLES_ANCHOR)) {
-    throw new Error(
-      `@bearbones/vite codegen-patch: expected anchor not found in css.d.ts.\n` +
-        `Anchor: ${JSON.stringify(STYLES_ANCHOR)}\n` +
-        `This usually means a Panda upgrade changed the emitted format. ` +
-        `Re-capture the anchor from a fresh \`panda codegen\` run and update ` +
-        `STYLES_ANCHOR in packages/bearbones-vite/src/codegen-patch.ts.`,
-    );
-  }
+  const targets = locateSpliceTargets(source);
 
-  const utilityUnion = renderUtilityUnion(utilityNames);
-  const injectedTypes = renderInjectedTypes(utilityUnion);
-  const markerTypes = renderMarkerTypes(conditions);
-  const patchedStyles = "type Styles = BearbonesSystemStyleObject | undefined | null | false";
+  const injectedBlock = renderInjectedBlock(utilityNames);
+  const markerBlock = renderMarkerBlock(conditions);
+  const rewrittenStyles = "type Styles = BearbonesSystemStyleObject | undefined | null | false";
 
-  const importBlock = renderImportBlock();
-  const pandaImportMarker = "import type { SystemStyleObject } from '../types/index';";
-  if (!source.includes(pandaImportMarker)) {
-    throw new Error(
-      `@bearbones/vite codegen-patch: expected Panda import marker not found.\n` +
-        `Marker: ${JSON.stringify(pandaImportMarker)}\n` +
-        `If Panda changed how it imports SystemStyleObject, update the marker ` +
-        `in packages/bearbones-vite/src/codegen-patch.ts.`,
-    );
-  }
-
-  return source
-    .replace(pandaImportMarker, `${pandaImportMarker}\n${importBlock}\n${injectedTypes}`)
-    .replace(STYLES_ANCHOR, `${patchedStyles}\n\n${markerTypes}`);
+  const out = new MagicString(source);
+  // Splice the injected types in immediately after Panda's SystemStyleObject
+  // import. A leading newline keeps the inserted block on its own line.
+  out.appendLeft(targets.importEnd, `\n${injectedBlock}`);
+  // Replace the entire `Styles` type alias with our rewritten alias plus the
+  // marker block on the following lines.
+  out.overwrite(
+    targets.stylesRange[0],
+    targets.stylesRange[1],
+    `${rewrittenStyles}\n\n${markerBlock}`,
+  );
+  return out.toString();
 }
 
 /**
@@ -96,19 +89,12 @@ export function patchCssArtifact(
  */
 export function patchCssRuntime(source: string): string {
   if (source.includes(RUNTIME_PATCH_SENTINEL)) return source;
-  const stub = [
-    "",
-    RUNTIME_PATCH_SENTINEL,
-    "export function marker(_id) {",
-    "  throw new Error(",
-    '    "bearbones: marker() was called at runtime. " +',
-    '      "This usually means the @bearbones/vite transform did not run before this module. " +',
-    "      \"Verify Panda's hooks include bearbonesHooks() and that the file imports `marker` from 'styled-system/css'.\"",
-    "  );",
-    "}",
-    "",
-  ].join("\n");
-  return source.endsWith("\n") ? source + stub : source + "\n" + stub;
+  const stub = renderMarkerStub();
+  // Match the previous output shape: one blank line between the existing
+  // module body and the appended stub, and a trailing newline.
+  const leading = source.endsWith("\n") ? "\n" : "\n\n";
+  const trailing = stub.endsWith("\n") ? "" : "\n";
+  return `${source}${leading}${stub}${trailing}`;
 }
 
 /**
@@ -118,155 +104,6 @@ export function patchCssRuntime(source: string): string {
  */
 export function patchCssArtifactLive(source: string): string {
   return patchCssArtifact(source, listUtilities(), listConditionsWithAnchor());
-}
-
-function renderUtilityUnion(names: readonly string[]): string {
-  if (names.length === 0) return "never";
-  return names.map((n) => `  | ${JSON.stringify(n)}`).join("\n");
-}
-
-function renderImportBlock(): string {
-  return [
-    "import type { Nested, Conditions } from '../types/conditions';",
-    "import type { Selectors, AnySelector } from '../types/selectors';",
-    "import type { SystemProperties, CssVarProperties } from '../types/style-props';",
-  ].join("\n");
-}
-
-function renderInjectedTypes(utilityUnion: string): string {
-  return [
-    "export type BearbonesUtilityName =",
-    utilityUnion,
-    ";",
-    "",
-    "type BearbonesNestedObject<P> = P & {",
-    "  [K in Selectors]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
-    "} & {",
-    "  [K in AnySelector]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
-    "} & {",
-    "  [K in keyof Conditions]?: BearbonesNested<P> | readonly BearbonesNested<P>[]",
-    "};",
-    "",
-    "export type BearbonesNested<P> = BearbonesUtilityName | BearbonesNestedObject<P>;",
-    "",
-    "export type BearbonesSystemStyleObject =",
-    "  | BearbonesUtilityName",
-    "  | Omit<BearbonesNestedObject<SystemProperties & CssVarProperties>, 'base'>;",
-    "",
-  ].join("\n");
-}
-
-/**
- * Project-local `marker` declaration + supporting interfaces.
- *
- * The `_<name>` shortcuts are enumerated from the conditions stash so the
- * surface tracks the host project's full condition vocabulary, including
- * presets it pulls in and any user `extend` entries. Conditions whose value
- * lacks the `&` placeholder are omitted at the stash level (see
- * `conditions-stash.ts`); the type emit only sees keys that compose into a
- * relational marker query.
- *
- * Relation result types are *real selector shapes* — `:where(<observer>) &`
- * for ancestor, etc. — with the `<observer>` slot computed by recursively
- * substituting every `&` in the condition value with the marker's anchor
- * selector. The five relations match StyleX's `when.*` API and produce
- * specificity (0,1,0) at runtime: only the styled element's own class
- * counts, not the marker observation.
- *
- * The hash slot in the anchor (`.bearbones-marker-${Id}_<HASH>`) is a fixed
- * literal placeholder. TypeScript can't compute the runtime SHA1 hash, so
- * the type-level selector and runtime selector match in shape but differ
- * in that one slot. Keeping the hash as a literal placeholder (rather than
- * `${string}`) is what lets these computed-key types survive in `css({...})`
- * arguments without collapsing into a string-index signature on the
- * enclosing object — a collapse that would conflict with Panda's narrow
- * property indexes the moment a sibling literal property is added.
- *
- * The fully-resolved selectors satisfy `AnySelector` (each contains `&`),
- * so they're accepted as keys in `BearbonesNestedObject<P>` via the
- * `[K in AnySelector]?` index. The runtime transform substitutes the real
- * hashed selector at parser:before time.
- */
-function renderMarkerTypes(conditions: readonly { name: string; value: string }[]): string {
-  // Single source of truth for the host's condition vocabulary, emitted as a
-  // typed object literal type. The `_<name>` shortcuts on `BearbonesMarker`
-  // are then derived from this map via a mapped type — the literal CSS
-  // condition strings appear exactly once instead of being repeated on each
-  // shortcut line.
-  const conditionLines = conditions.map(
-    ({ name, value }) => `  readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`,
-  );
-  return [
-    "// Marker selector shapes are derived from the return types of the runtime",
-    "// functions in `@bearbones/vite/marker-registry`, so the type-level",
-    "// evaluation of `marker(...).is.<relation>` matches the runtime emit",
-    "// byte-for-byte (modulo the build-time SHA1 hash, which TypeScript can't",
-    "// compute — we substitute a fixed `<HASH>` literal placeholder there).",
-    "import type {",
-    "  composeRelationSelectors,",
-    "  markerAnchor,",
-    "  markerAnchorClass,",
-    "  substituteAmp,",
-    "} from '@bearbones/vite';",
-    "",
-    "/** Anchor selector for the marker; `<HASH>` is the type-level placeholder. */",
-    "type BearbonesMarkerAnchor<Id extends string> = ReturnType<",
-    '  typeof markerAnchor<Id, "<HASH>">',
-    ">;",
-    "",
-    "/** Marker observation: condition value with every `&` substituted for the anchor. */",
-    "type BearbonesObserver<Id extends string, Cond extends string> = ReturnType<",
-    "  typeof substituteAmp<Cond, BearbonesMarkerAnchor<Id>>",
-    ">;",
-    "",
-    "export interface BearbonesMarkerBuilder<Id extends string, Cond extends string> {",
-    "  readonly is: ReturnType<typeof composeRelationSelectors<BearbonesObserver<Id, Cond>>>;",
-    "}",
-    "",
-    "/**",
-    " * The host project's condition vocabulary as a typed map. Each entry's",
-    " * value is the resolved Panda condition selector — the same string the",
-    " * runtime conditions stash holds. Single source of truth for the",
-    " * `BearbonesMarker._<name>` shortcuts; do not duplicate these strings",
-    " * elsewhere in the type emit.",
-    " */",
-    "type BearbonesMarkerConditions = {",
-    ...conditionLines,
-    "};",
-    "",
-    "/**",
-    " * Mapped type that turns each condition entry into a typed `_<name>`",
-    " * shortcut on the marker. The `Cond` parameter is the entry's value, so",
-    " * `BearbonesMarkerBuilder` resolves to a relation selector observing the",
-    " * exact runtime condition.",
-    " */",
-    "type BearbonesMarkerShortcuts<Id extends string> = {",
-    "  readonly [K in keyof BearbonesMarkerConditions as `_${K & string}`]: BearbonesMarkerBuilder<",
-    "    Id,",
-    "    BearbonesMarkerConditions[K]",
-    "  >;",
-    "};",
-    "",
-    "export interface BearbonesMarker<Id extends string = string>",
-    "  extends BearbonesMarkerShortcuts<Id> {",
-    // Anchor class derived from `markerAnchorClass`'s return type so the
-    // host-visible class name shape always matches what `describeMarker`
-    // produces at runtime. The `string` second arg stands in for the
-    // unknown SHA1 hash slot — TypeScript can't compute the hash, so we
-    // intentionally widen here (the consumer reads this as a className
-    // string, not as a computed key, so widening is fine).
-    "  readonly anchor: ReturnType<typeof markerAnchorClass<Id, string>>;",
-    // Call form: `Cond` is inferred from the literal arg so each distinct
-    // call site gets a distinct concrete observer. Non-literal args widen
-    // to `string` and the resulting selector type loses concreteness —
-    // that aligns with the runtime contract since the lowering transform
-    // only resolves literal arguments anyway.
-    "  <C extends string>(condValue: C): BearbonesMarkerBuilder<Id, C>;",
-    "}",
-    "",
-    "export declare function marker<Id extends string>(id: Id): BearbonesMarker<Id>;",
-    "",
-  ].join("\n");
 }
 
 /**
