@@ -1,30 +1,51 @@
 import { defineConfig } from "vite-plus";
-// @ts-expect-error — sibling `.mjs` script with no `.d.ts`. The runtime
-// shape of `generateTemplates` is obvious from the implementation: a
-// no-arg function returning the list of template file paths it just
-// inlined. Adding a declaration file would be more ceremony than value.
-import { generateTemplates } from "./scripts/generate-templates.mjs";
+// @ts-expect-error — sibling `.mjs` script with no `.d.ts`. Runtime shape
+// is obvious from the implementation; adding declarations is more
+// ceremony than value.
+import { generateTemplates, listTemplateFiles } from "./scripts/generate-templates.mjs";
 
 /**
- * tsdown plugin that regenerates `src/templates.generated.ts` from
- * `src/templates/*.ts` at the start of every build, and registers each
- * template as a watch dependency. In `vp pack --watch`, editing any
- * template file triggers a rebuild that picks up the change automatically
- * — no separate watcher process, no manual restart.
+ * tsdown plugin that inlines `src/templates/*.ts` into
+ * `src/templates.generated.ts` so the bundle has no runtime fs reads or
+ * `import.meta.url` reliance.
  *
- * `this.addWatchFile` is provided by the rolldown plugin context. We type
- * `this` inline to avoid an explicit dep on rolldown's Plugin type, which
- * isn't directly resolvable through vite-plus's exports.
+ * Critical: regen runs ONLY when something actually demands it — on the
+ * first build, and on `watchChange` for template source files. If we
+ * regenerated on every `buildStart`, we'd write `templates.generated.ts`
+ * (which `codegen-templates.ts` imports), and rolldown's import-graph
+ * watcher would see that write as a change → fire another `buildStart` →
+ * regen again → infinite loop. Gating regen with a `pendingGen` flag
+ * breaks that cycle at the root: `buildStart` doesn't write the file
+ * unless a real template change has been observed.
  */
 function inlineTemplatesPlugin() {
+  // Snapshot the template file list at plugin construction. Adding or
+  // removing template files later is a config-shape change — restart
+  // dev to pick it up.
+  const templateFiles: string[] = listTemplateFiles();
+  let pendingGen = true;
+
   return {
     name: "bearbones:inline-templates",
     buildStart(this: { addWatchFile(path: string): void }) {
-      const files: string[] = generateTemplates();
-      for (const file of files) {
-        // `addWatchFile` makes rolldown re-trigger `buildStart` (and thus
-        // the regen) whenever any of these files change in watch mode.
+      if (pendingGen) {
+        generateTemplates();
+        pendingGen = false;
+      }
+      // `addWatchFile` registers each template as a watch dep so
+      // rolldown will fire `watchChange` for them. Idempotent re-add
+      // across builds is fine — rolldown dedups internally.
+      for (const file of templateFiles) {
         this.addWatchFile(file);
+      }
+    },
+    watchChange(id: string) {
+      // Mark for regen on the next build only when an actual template
+      // source file changed. Edits to `templates.generated.ts` (which
+      // we just wrote) are ignored here, breaking the self-trigger
+      // loop.
+      if (templateFiles.includes(id)) {
+        pendingGen = true;
       }
     },
   };
