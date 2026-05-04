@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
-    "dev": "vp run website#dev",
+    "dev": "vp run --filter '@bearbones/*' build && vp run --filter website --filter @bearbones/vite --parallel dev",
     "check": "vp run --filter '@bearbones/*' build && vp run --filter website codegen && vp check && vp run -r test",
     "fix": "vp fmt",
     "prepare": "vp config"
